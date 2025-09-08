@@ -38,49 +38,29 @@ def while_loop(condition: Callable[[Any], bool], body: Union[Stage, Pipeline]) -
     else:
         raise TypeError(f"Body must be a Stage or Pipeline, not {type(body)}")
 
-    # Determine if the body pipeline requires an async backend
-    is_async_body = "async" in body_pipeline._get_required_backend_names()
+    # The `while_loop` component will always be defined as an async stage.
+    # This is because the synchronous version (`_while_func_sync`) can cause
+    # deadlocks when executed by an async runner, as it uses the blocking
+    # `collect()` method. The async version is more robust and can handle
+    # both sync and async bodies correctly by using `run_async()`.
 
-    if is_async_body:
+    @stage(name="While", stage_type="itemwise", backend="async")
+    async def _while_func_async(context: Context, item: Any) -> AsyncIterator[Any]:
+        current_item = item
+        # The loop first checks the condition, then executes the body.
+        while condition(current_item):
+            stream, _ = await body_pipeline.run_async(data=[current_item])
+            results: List[Any] = [res async for res in stream]
 
-        @stage(name="While", stage_type="itemwise", backend="async")
-        async def _while_func_async(context: Context, item: Any) -> AsyncIterator[Any]:
-            current_item = item
-            # The loop first checks the condition, then executes the body.
-            while condition(current_item):
-                stream, _ = await body_pipeline.run_async(data=[current_item])
-                results: List[Any] = [res async for res in stream]
+            # The body must produce a single output item to be used in the
+            # next iteration's condition check.
+            if len(results) != 1:
+                raise ValueError(
+                    f"The body of a while_loop must produce exactly one item, "
+                    f"but it produced {len(results)} items."
+                )
+            current_item = results[0]
+        # Yield the final item after the loop terminates.
+        yield current_item
 
-                # The body must produce a single output item to be used in the
-                # next iteration's condition check.
-                if len(results) != 1:
-                    raise ValueError(
-                        f"The body of a while_loop must produce exactly one item, "
-                        f"but it produced {len(results)} items."
-                    )
-                current_item = results[0]
-            # Yield the final item after the loop terminates.
-            yield current_item
-
-        return _while_func_async
-    else:
-
-        @stage(name="While", stage_type="itemwise")
-        def _while_func_sync(context: Context, item: Any) -> Iterable[Any]:
-            current_item = item
-            # The loop first checks the condition, then executes the body.
-            while condition(current_item):
-                results, _ = body_pipeline.collect(data=[current_item])
-
-                # The body must produce a single output item to be used in the
-                # next iteration's condition check.
-                if len(results) != 1:
-                    raise ValueError(
-                        f"The body of a while_loop must produce exactly one item, "
-                        f"but it produced {len(results)} items."
-                    )
-                current_item = results[0]
-            # Yield the final item after the loop terminates.
-            yield current_item
-
-        return _while_func_sync
+    return _while_func_async
