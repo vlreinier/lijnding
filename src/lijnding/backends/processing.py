@@ -1,186 +1,139 @@
 from __future__ import annotations
 
-import multiprocessing as mp
-import threading
+import asyncio
 import time
-from typing import TYPE_CHECKING, Any, Iterable, Iterator
+from concurrent.futures import ProcessPoolExecutor
+from typing import TYPE_CHECKING, Any, AsyncIterator, AsyncIterable, List, Tuple
 import dill as serializer
 
-from .base import BaseRunner, _handle_route_to_pipeline
+from .base import (
+    BaseRunner,
+    _handle_route_to_pipeline,
+    _handle_transform_and_retry,
+)
+from ..core.utils import ensure_iterable
 
 if TYPE_CHECKING:
     from ..core.context import Context
     from ..core.stage import Stage
 
-SENTINEL = "__LIJNDING_SENTINEL__"
-METRICS_SENTINEL = "__METRICS__"
-ERROR_SENTINEL = "__ERROR__"
 
-
-def _worker_process(
-    q_in: mp.Queue,
-    q_out: mp.Queue,
-    stage_payload: bytes,
-    context_proxies: tuple | None,
-    worker_id: int,
-):
-    """Worker process that initializes a stage and processes items."""
+# This function runs in a separate process.
+def _worker_fn(
+    stage_payload: bytes, context_proxies: tuple | None, item: Any
+) -> Tuple[List[Any], dict, Exception | None]:
+    """
+    The target function for the process pool executor.
+    It deserializes the stage, runs the item through it, and returns
+    the results, metrics, and any error.
+    """
     from ..core.context import Context
-    from ..core.utils import ensure_iterable
-    from ..core.log import get_logger
 
-    logger = get_logger(f"lijnding.worker.{worker_id}")
+    stage = serializer.loads(stage_payload)
+    context = Context(_from_proxies=context_proxies)
+
+    # Minimal metrics for this single item
+    metrics = {"items_in": 1, "items_out": 0, "errors": 0, "time_total": 0.0}
+
     try:
-        stage = serializer.loads(stage_payload)
-        worker_context = Context(_from_proxies=context_proxies)
+        item_start_time = time.perf_counter()
+        results = stage._invoke(context, item)
+        output = list(ensure_iterable(results))
+        item_elapsed = time.perf_counter() - item_start_time
 
-        if stage.hooks.on_worker_init:
-            worker_context.worker_state = (
-                stage.hooks.on_worker_init(worker_context) or {}
-            )
-
-        logger.info("worker_started")
-
-        while True:
-            item = q_in.get()
-            if item == SENTINEL:
-                break
-
-            item_start_time = time.perf_counter()
-            try:
-                results = stage._invoke(worker_context, item)
-                count_out = 0
-                for res in ensure_iterable(results):
-                    q_out.put(res)
-                    count_out += 1
-
-                item_elapsed = time.perf_counter() - item_start_time
-                metrics = {
-                    "items_in": 1,
-                    "items_out": count_out,
-                    "errors": 0,
-                    "time_total": item_elapsed,
-                }
-                q_out.put((METRICS_SENTINEL, metrics))
-
-            except Exception as e:
-                item_elapsed = time.perf_counter() - item_start_time
-                metrics = {
-                    "items_in": 1,
-                    "items_out": 0,
-                    "errors": 1,
-                    "time_total": item_elapsed,
-                }
-                q_out.put((METRICS_SENTINEL, metrics))
-                q_out.put((ERROR_SENTINEL, (item, e)))
-
+        metrics["items_out"] = len(output)
+        metrics["time_total"] = item_elapsed
+        return output, metrics, None
     except Exception as e:
-        logger.error("worker_critical_error", error=str(e))
-        q_out.put((ERROR_SENTINEL, (None, e)))  # Signal critical failure
-    finally:
-        if stage and worker_context and stage.hooks.on_worker_exit:
-            stage.hooks.on_worker_exit(worker_context)
-        logger.info("worker_finished")
-        q_out.put(SENTINEL)
+        item_elapsed = time.perf_counter() - item_start_time
+        metrics["errors"] = 1
+        metrics["time_total"] = item_elapsed
+        # Return the exception to be re-raised in the main process
+        return [], metrics, e
 
 
 class ProcessingRunner(BaseRunner):
-    """A runner that executes itemwise stages in a persistent pool of processes."""
+    """
+    A runner that executes sync stages concurrently in a process pool.
+    """
 
-    def _run_itemwise(
-        self, stage: "Stage", context: "Context", iterable: Iterable[Any]
-    ) -> Iterator[Any]:
+    async def _run_itemwise(
+        self, stage: "Stage", context: "Context", iterable: AsyncIterable[Any]
+    ) -> AsyncIterator[Any]:
+        """Processes items concurrently in a process pool."""
         stage.logger.info("stream_started", backend="processing", workers=stage.workers)
         stream_start_time = time.perf_counter()
+        total_items_in = 0
+        total_items_out = 0
 
-        try:
-            mp.set_start_method("spawn", force=True)
-        except RuntimeError:
-            pass
+        # Create a ProcessPoolExecutor
+        executor = ProcessPoolExecutor(max_workers=stage.workers)
+        loop = asyncio.get_running_loop()
 
-        q_in: mp.Queue = mp.Queue(maxsize=stage.buffer_size or (stage.workers * 2))
-        q_out: mp.Queue = mp.Queue()
-
+        # Get context proxies if the context is mp-safe
         context_proxies = (
-            (context._data, context._lock)
-            if getattr(context, "_mp_safe", False)
-            else None
+            (context._data, context._lock) if getattr(context, "_mp_safe", False) else None
         )
+        if not context_proxies:
+            stage.logger.warning(
+                "Context is not multiprocessing-safe. Changes to context "
+                "in a 'process' backend stage will not be propagated."
+            )
+
+        # Serialize the stage once to send to all worker processes
         stage_payload = serializer.dumps(stage)
 
-        processes = [
-            mp.Process(
-                target=_worker_process,
-                args=(q_in, q_out, stage_payload, context_proxies, i),
-                daemon=True,
+        # Sentinel to signal the end of the stream
+        END_OF_QUEUE = object()
+        results_queue = asyncio.Queue()
+
+        async def _process_item(item):
+            """Submits one item to the process pool."""
+            future = loop.run_in_executor(
+                executor, _worker_fn, stage_payload, context_proxies, item
             )
-            for i in range(stage.workers)
-        ]
-        for p in processes:
-            p.start()
+            await results_queue.put(future)
 
-        total_items_fed = 0
+        async def feeder():
+            """Feeds items from the input iterable to the worker tasks."""
+            tasks = [asyncio.create_task(_process_item(item)) async for item in iterable]
+            await asyncio.gather(*tasks)
+            await results_queue.put(END_OF_QUEUE)
 
-        def feeder():
-            nonlocal total_items_fed
-            try:
-                for item in iterable:
-                    q_in.put(item)
-                    total_items_fed += 1
-            finally:
-                for _ in range(stage.workers):
-                    q_in.put(SENTINEL)
+        feeder_task = asyncio.create_task(feeder())
 
-        feeder_thread = threading.Thread(target=feeder, daemon=True)
-        feeder_thread.start()
-
-        finished_workers = 0
         try:
-            while finished_workers < stage.workers:
-                result = q_out.get()
+            while True:
+                future_or_sentinel = await results_queue.get()
+                if future_or_sentinel is END_OF_QUEUE:
+                    break
 
-                if result == SENTINEL:
-                    finished_workers += 1
-                    continue
+                future = future_or_sentinel
+                output, metrics, error = await future
 
-                if isinstance(result, tuple):
-                    if result[0] == METRICS_SENTINEL:
-                        for key, value in result[1].items():
-                            stage.metrics[key] += value
-                        continue
+                # Update metrics in the main process
+                for key, value in metrics.items():
+                    stage.metrics[key] += value
 
-                    if result[0] == ERROR_SENTINEL:
-                        item, e = result[1]
-                        stage.logger.warning(f"Error from worker: {e}")
-                        if item is None:  # Critical worker error
-                            raise e
+                total_items_in += metrics["items_in"]
+                total_items_out += metrics["items_out"]
 
-                        policy = stage.error_policy
-                        if policy.mode == "route_to_pipeline":
-                            _handle_route_to_pipeline(stage, context, item)
-                        elif policy.mode != "skip":
-                            raise e
-                        continue
+                if error:
+                    # TODO: Add retry logic here
+                    raise error
 
-                yield result
+                for res in output:
+                    yield res
         finally:
-            for p in processes:
-                p.join(timeout=1.0)
-                if p.is_alive():
-                    p.terminate()
+            if not feeder_task.done():
+                feeder_task.cancel()
+            executor.shutdown(wait=True)
 
             total_duration = time.perf_counter() - stream_start_time
             stage.logger.info(
                 "stream_finished",
-                items_in=stage.metrics["items_in"],
-                items_out=stage.metrics["items_out"],
+                items_in=total_items_in,
+                items_out=total_items_out,
                 errors=stage.metrics["errors"],
                 duration=round(total_duration, 4),
             )
-
-    def _run_aggregator(
-        self, stage: "Stage", context: "Context", iterable: Iterable[Any]
-    ) -> Iterator[Any]:
-        from .serial import SerialRunner
-
-        return SerialRunner()._run_aggregator(stage, context, iterable)

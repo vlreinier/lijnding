@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, Iterable, Iterator
+from typing import TYPE_CHECKING, Any, AsyncIterable, AsyncIterator
 
 from ..core.utils import ensure_iterable
 
@@ -20,9 +21,9 @@ class BaseRunner(ABC):
     (e.g., serial, threaded, or multiprocessing).
     """
 
-    def run(
-        self, stage: "Stage", context: "Context", iterable: Iterable[Any], index: int
-    ) -> Iterator[Any]:
+    async def run(
+        self, stage: "Stage", context: "Context", iterable: AsyncIterable[Any], index: int
+    ) -> AsyncIterator[Any]:
         """
         Executes the stage. This is the main entry point for a runner.
         It delegates to the appropriate method based on the stage type.
@@ -31,35 +32,36 @@ class BaseRunner(ABC):
 
         if stage.stage_type == "source":
             # Source stages ignore the input iterable and generate their own data.
-            return ensure_iterable(stage._invoke(context))
-        if stage.stage_type == "aggregator":
-            return self._run_aggregator(stage, context, iterable)
+            results = stage._invoke(context)
+            output_stream = ensure_iterable(results)
+            if hasattr(output_stream, "__aiter__"):
+                async for res in output_stream:
+                    yield res
+            else:
+                for res in output_stream:
+                    yield res
 
-        # Default to itemwise processing
-        return self._run_itemwise(stage, context, iterable)
+        elif stage.stage_type == "aggregator":
+            async for res in self._run_aggregator(stage, context, iterable):
+                yield res
+        else:
+            # Default to itemwise processing
+            async for res in self._run_itemwise(stage, context, iterable):
+                yield res
 
     @abstractmethod
-    def _run_itemwise(
-        self, stage: "Stage", context: "Context", iterable: Iterable[Any]
-    ) -> Iterator[Any]:
+    async def _run_itemwise(
+        self, stage: "Stage", context: "Context", iterable: AsyncIterable[Any]
+    ) -> AsyncIterator[Any]:
         """
         Processes an iterable item by item.
         Each runner must implement this method.
         """
         raise NotImplementedError
 
-    def should_run_in_own_loop(self) -> bool:
-        """
-        Determines if a runner, when used as a sync bridge in an async pipeline,
-        should be run in a new event loop on a separate thread instead of the
-        main thread's executor. This is for runners that might spawn their
-        own event loops, which would conflict with the main one.
-        """
-        return False
-
-    def _run_aggregator(
-        self, stage: "Stage", context: "Context", iterable: Iterable[Any]
-    ) -> Iterator[Any]:
+    async def _run_aggregator(
+        self, stage: "Stage", context: "Context", iterable: AsyncIterable[Any]
+    ) -> AsyncIterator[Any]:
         """
         Processes an entire iterable at once with structured logging.
         This implementation fully consumes the input stream, logs metrics,
@@ -74,8 +76,8 @@ class BaseRunner(ABC):
             context.worker_state = stage.hooks.on_worker_init(context) or {}
 
         try:
-            # Materialize the iterable to know the count and allow hooks.
-            materialized_items = list(iterable)
+            # Materialize the async iterable to know the count and allow hooks.
+            materialized_items = [item async for item in iterable]
             items_in = len(materialized_items)
             stage.metrics["items_in"] += items_in
 
@@ -84,7 +86,11 @@ class BaseRunner(ABC):
             if stage.hooks and stage.hooks.on_stream_end:
                 stage.hooks.on_stream_end(context)
 
-            results = stage._invoke(context, materialized_items)
+            if stage.is_async:
+                results = await stage._invoke(context, materialized_items)
+            else:
+                results = await asyncio.to_thread(stage._invoke, context, materialized_items)
+
             output_stream = ensure_iterable(results)
 
             for res in output_stream:
@@ -114,7 +120,7 @@ class BaseRunner(ABC):
             )
 
 
-def _handle_route_to_pipeline(stage: "Stage", context: "Context", item: Any):
+async def _handle_route_to_pipeline(stage: "Stage", context: "Context", item: Any):
     """Helper function to route a failed item to a separate pipeline."""
     # Local imports to avoid circular dependencies
     from ..core.pipeline import Pipeline
@@ -127,12 +133,15 @@ def _handle_route_to_pipeline(stage: "Stage", context: "Context", item: Any):
     if isinstance(pipeline, Stage):
         pipeline = Pipeline([pipeline])
 
-    # We can just call the pipeline's collect method directly.
-    # This is simpler than manually getting a runner.
-    pipeline.collect([item])
+    # Run the pipeline and consume the async stream to ensure it executes.
+    stream, _ = await pipeline.run([item])
+    async for _ in stream:
+        pass
 
 
-def _handle_transform_and_retry(stage: "Stage", context: "Context", item: Any) -> Any:
+async def _handle_transform_and_retry(
+    stage: "Stage", context: "Context", item: Any
+) -> Any:
     """
     Helper function to route a failed item to a transformer pipeline and
     return the transformed item.
@@ -141,61 +150,13 @@ def _handle_transform_and_retry(stage: "Stage", context: "Context", item: Any) -
     from ..core.stage import Stage
 
     if not stage.error_policy.route_to_pipeline:
-        # This should be caught by the ErrorPolicy's validation, but as a safeguard:
         raise ValueError("Missing 'route_to_pipeline' for transform_and_retry mode.")
 
     pipeline = stage.error_policy.route_to_pipeline
     if isinstance(pipeline, Stage):
         pipeline = Pipeline([pipeline])
 
-    results, _ = pipeline.collect([item])
-    if len(results) != 1:
-        raise ValueError(
-            f"Transformer pipeline for 'route_to_pipeline_and_retry' must "
-            f"produce exactly one item, but produced {len(results)}."
-        )
-    return results[0]
-
-
-async def _handle_route_to_pipeline_async(
-    stage: "Stage", context: "Context", item: Any
-):
-    """Async helper to route a failed item to a separate pipeline."""
-    from ..core.pipeline import Pipeline
-    from ..core.stage import Stage
-
-    if not stage.error_policy.route_to_pipeline:
-        return
-
-    pipeline = stage.error_policy.route_to_pipeline
-    if isinstance(pipeline, Stage):
-        pipeline = Pipeline([pipeline])
-
-    # Run the pipeline and consume the async stream to ensure it executes.
-    stream, _ = await pipeline.run_async([item])
-    async for _ in stream:
-        pass
-
-
-async def _handle_transform_and_retry_async(
-    stage: "Stage", context: "Context", item: Any
-) -> Any:
-    """
-    Async helper to route a failed item to a transformer pipeline and
-    return the transformed item.
-    """
-    from ..core.pipeline import Pipeline
-    from ..core.stage import Stage
-
-    if not stage.error_policy.route_to_pipeline:
-        raise ValueError("Missing 'route_to_pipeline' for transform_and_retry mode.")
-
-    pipeline = stage.error_policy.route_to_pipeline
-    if isinstance(pipeline, Stage):
-        pipeline = Pipeline([pipeline])
-
-    stream, _ = await pipeline.run_async([item])
-    results = [res async for res in stream]
+    results, _ = await pipeline.collect([item])
     if len(results) != 1:
         raise ValueError(
             f"Transformer pipeline for 'route_to_pipeline_and_retry' must "

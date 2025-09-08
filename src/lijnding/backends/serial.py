@@ -15,16 +15,20 @@ if TYPE_CHECKING:
     from ..core.stage import Stage
 
 
+import asyncio
+from typing import AsyncIterable, AsyncIterator
+
 class SerialRunner(BaseRunner):
     """
-    A runner that executes stages sequentially in the main thread.
+    A runner that executes sync stages sequentially, but in a non-blocking way
+    with respect to the asyncio event loop.
     """
 
-    def _run_itemwise(
-        self, stage: "Stage", context: "Context", iterable: Iterable[Any]
-    ) -> Iterator[Any]:
+    async def _run_itemwise(
+        self, stage: "Stage", context: "Context", iterable: AsyncIterable[Any]
+    ) -> AsyncIterator[Any]:
         """
-        Processes items one by one in a simple loop, with structured logging.
+        Processes items one by one in a simple async loop.
         """
         stage.logger.info("stream_started")
         total_items_in = 0
@@ -35,7 +39,7 @@ class SerialRunner(BaseRunner):
             context.worker_state = stage.hooks.on_worker_init(context) or {}
 
         try:
-            for item in iterable:
+            async for item in iterable:
                 total_items_in += 1
                 stage.metrics["items_in"] += 1
                 item_start_time = time.perf_counter()
@@ -46,7 +50,8 @@ class SerialRunner(BaseRunner):
 
                 while True:
                     try:
-                        results = stage._invoke(context, item)
+                        # Run the sync function in a thread to avoid blocking the loop
+                        results = await asyncio.to_thread(stage._invoke, context, item)
                         output_stream = ensure_iterable(results)
 
                         count_out = 0
@@ -83,19 +88,21 @@ class SerialRunner(BaseRunner):
 
                         policy = stage.error_policy
                         if policy.mode == "route_to_pipeline":
-                            _handle_route_to_pipeline(stage, context, item)
+                            await _handle_route_to_pipeline(stage, context, item)
                             break
                         elif (
                             policy.mode == "route_to_pipeline_and_retry"
                             and attempts <= policy.retries
                         ):
-                            item = _handle_transform_and_retry(stage, context, item)
+                            item = await _handle_transform_and_retry(
+                                stage, context, item
+                            )
                             if policy.backoff > 0:
-                                time.sleep(policy.backoff * attempts)
+                                await asyncio.sleep(policy.backoff * attempts)
                             continue
                         elif policy.mode == "retry" and attempts <= policy.retries:
                             if policy.backoff > 0:
-                                time.sleep(policy.backoff * attempts)
+                                await asyncio.sleep(policy.backoff * attempts)
                             continue
                         elif policy.mode == "skip":
                             break

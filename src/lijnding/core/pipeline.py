@@ -25,7 +25,6 @@ from ..backends.runner_registry import get_runner
 from .context import Context
 from .stage import Stage, stage
 from .log import get_logger
-from .utils import AsyncToSyncIterator
 from ..config import Config, load_config
 
 try:
@@ -146,14 +145,15 @@ class Pipeline:
 
         return context_class(mp_safe=needs_mp, config=config, pipeline_name=self.name)
 
-    def run(
+    async def run(
         self,
-        data: Optional[Iterable[Any]] = None,
-        *,
-        collect: bool = False,
+        data: Optional[Union[Iterable[Any], AsyncIterable[Any]]] = None,
         config_path: Optional[str] = None,
         context: Optional[Context] = None,
-    ) -> Tuple[Union[List[Any], Iterable[Any]], Context]:
+    ) -> Tuple[AsyncIterator[Any], Context]:
+        """
+        Asynchronously runs the pipeline. This is the primary execution method.
+        """
         self.logger.info("Pipeline run started.")
         start_time = time.time()
         config = load_config(config_path)
@@ -163,70 +163,6 @@ class Pipeline:
             if not self.stages or self.stages[0].stage_type != "source":
                 raise TypeError(
                     "Pipeline.run() requires a data argument unless the first stage is a source stage."
-                )
-            data = []
-
-        stream: Iterable[Any] = data
-        exception: Optional[Exception] = None
-
-        context.on_run_start(self)
-        try:
-            for index, stage_obj in enumerate(self.stages):
-                runner = get_runner(getattr(stage_obj, "backend", "serial"))
-                stream = runner.run(stage_obj, context, stream, index)
-
-            if collect:
-                if hasattr(stream, "__aiter__"):
-
-                    async def _collect_async(async_stream):
-                        return [item async for item in async_stream]
-
-                    try:
-                        loop = asyncio.get_running_loop()
-                    except RuntimeError:
-                        loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(loop)
-
-                    return loop.run_until_complete(_collect_async(stream)), context
-                else:
-                    return list(stream), context
-            return stream, context
-        except Exception as e:
-            exception = e
-            self.logger.error("Pipeline failed", exception=str(e), exc_info=True)
-            raise
-        finally:
-            context.on_run_finish(self, exception)
-            end_time = time.time()
-            total_time = end_time - start_time
-            self.logger.info(f"Pipeline run finished in {total_time:.4f} seconds.")
-
-    def collect(
-        self,
-        data: Optional[Iterable[Any]] = None,
-        config_path: Optional[str] = None,
-        context: Optional[Context] = None,
-    ) -> Tuple[List[Any], Context]:
-        stream, context = self.run(
-            data, collect=True, config_path=config_path, context=context
-        )
-        return stream, context  # type: ignore
-
-    async def run_async(
-        self,
-        data: Optional[Union[Iterable[Any], AsyncIterable[Any]]] = None,
-        config_path: Optional[str] = None,
-        context: Optional[Context] = None,
-    ) -> Tuple[AsyncIterator[Any], Context]:
-        self.logger.info("Async pipeline run started.")
-        start_time = time.time()
-        config = load_config(config_path)
-        context = self._build_context(config, context)
-
-        if data is None:
-            if not self.stages or self.stages[0].stage_type != "source":
-                raise TypeError(
-                    "Pipeline.run_async() requires a data argument unless the first stage is a source stage."
                 )
             data = []
 
@@ -245,41 +181,46 @@ class Pipeline:
         try:
             for index, stage_obj in enumerate(self.stages):
                 runner = get_runner(getattr(stage_obj, "backend", "serial"))
-                if hasattr(runner, "run_async"):
-                    stream = runner.run_async(stage_obj, context, stream, index)
-                else:
-                    loop = asyncio.get_running_loop()
-                    sync_iterable = AsyncToSyncIterator(stream, loop)
+                stream = runner.run(stage_obj, context, stream, index)
 
-                    def run_sync_stage_in_thread():
-                        if runner.should_run_in_own_loop():
-                            new_loop = asyncio.new_event_loop()
-                            asyncio.set_event_loop(new_loop)
-                            try:
-                                return list(
-                                    runner.run(stage_obj, context, sync_iterable, index)
-                                )
-                            finally:
-                                new_loop.close()
-                        else:
-                            return list(runner.run(stage_obj, context, sync_iterable, index))
-
-                    sync_results = await loop.run_in_executor(
-                        None, run_sync_stage_in_thread
-                    )
-                    stream = _to_async(sync_results)
             return stream, context
         except Exception as e:
             exception = e
-            self.logger.error("Async pipeline failed", exception=str(e), exc_info=True)
+            self.logger.error("Pipeline failed", exception=str(e), exc_info=True)
             raise
         finally:
             context.on_run_finish(self, exception)
             end_time = time.time()
             total_time = end_time - start_time
-            self.logger.info(
-                f"Async pipeline run finished in {total_time:.4f} seconds."
-            )
+            self.logger.info(f"Pipeline run finished in {total_time:.4f} seconds.")
+
+    def collect(
+        self,
+        data: Optional[Iterable[Any]] = None,
+        config_path: Optional[str] = None,
+        context: Optional[Context] = None,
+    ) -> Tuple[List[Any], Context]:
+        """
+        Runs the pipeline and collects all results into a list.
+        This is a synchronous, blocking call.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+            if loop.is_running():
+                # This is a bit of a hack to run an async function from a running loop
+                # in a sync way. It's not ideal, but it's a common problem.
+                import nest_asyncio
+                nest_asyncio.apply()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        async def _collect():
+            stream, ctx = await self.run(data, config_path=config_path, context=context)
+            return [item async for item in stream], ctx
+
+        results, context = loop.run_until_complete(_collect())
+        return results, context
 
     @property
     def metrics(self) -> dict[str, Any]:
@@ -310,7 +251,7 @@ class Pipeline:
             async def _pipeline_as_stage_func_async(
                 context: Context, item: Any
             ) -> AsyncIterator[Any]:
-                stream, _ = await self.run_async(data=[item])
+                stream, _ = await self.run(data=[item])
                 async for inner_item in stream:
                     yield inner_item
 
@@ -325,7 +266,7 @@ class Pipeline:
             def _pipeline_as_stage_func_sync(
                 context: Context, item: Any
             ) -> Iterable[Any]:
-                inner_results, _ = self.run(data=[item], collect=True)
+                inner_results, _ = self.collect(data=[item])
                 yield from inner_results
 
             return _pipeline_as_stage_func_sync
