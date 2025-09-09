@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 import time
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, AsyncIterable, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncIterable, AsyncIterator, Optional
+from concurrent.futures import ProcessPoolExecutor
 
 from ..core.utils import ensure_iterable
 
@@ -22,7 +23,13 @@ class BaseRunner(ABC):
     """
 
     async def run(
-        self, stage: "Stage", context: "Context", iterable: AsyncIterable[Any], index: int
+        self,
+        stage: "Stage",
+        context: "Context",
+        iterable: AsyncIterable[Any],
+        index: int,
+        *,
+        executor: Optional[ProcessPoolExecutor] = None,
     ) -> AsyncIterator[Any]:
         """
         Executes the stage. This is the main entry point for a runner.
@@ -42,16 +49,21 @@ class BaseRunner(ABC):
                     yield res
 
         elif stage.stage_type == "aggregator":
-            async for res in self._run_aggregator(stage, context, iterable):
+            async for res in self._run_aggregator(stage, context, iterable, executor=executor):
                 yield res
         else:
             # Default to itemwise processing
-            async for res in self._run_itemwise(stage, context, iterable):
+            async for res in self._run_itemwise(stage, context, iterable, executor=executor):
                 yield res
 
     @abstractmethod
     async def _run_itemwise(
-        self, stage: "Stage", context: "Context", iterable: AsyncIterable[Any]
+        self,
+        stage: "Stage",
+        context: "Context",
+        iterable: AsyncIterable[Any],
+        *,
+        executor: Optional[ProcessPoolExecutor] = None,
     ) -> AsyncIterator[Any]:
         """
         Processes an iterable item by item.
@@ -60,7 +72,12 @@ class BaseRunner(ABC):
         raise NotImplementedError
 
     async def _run_aggregator(
-        self, stage: "Stage", context: "Context", iterable: AsyncIterable[Any]
+        self,
+        stage: "Stage",
+        context: "Context",
+        iterable: AsyncIterable[Any],
+        *,
+        executor: Optional[ProcessPoolExecutor] = None,
     ) -> AsyncIterator[Any]:
         """
         Processes an entire iterable at once with structured logging.

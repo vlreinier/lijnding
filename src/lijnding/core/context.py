@@ -89,3 +89,9 @@ class Context:
     def on_stage_error(self, stage, exception: Exception):
         """Hook called when a stage encounters an error during processing."""
         pass
+
+    def shutdown(self):
+        """Shuts down any background processes, like a multiprocessing.Manager."""
+        if self._manager:
+            self.logger.debug("Shutting down multiprocessing manager for context.")
+            self._manager.shutdown()

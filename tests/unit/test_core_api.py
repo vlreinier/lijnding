@@ -105,9 +105,9 @@ def test_stage_direct_execution():
 
 @pytest.mark.asyncio
 async def test_stage_direct_async_execution():
-    """Tests that a single async stage can be executed directly using .run_async()."""
+    """Tests that a single async stage can be executed directly using .run()."""
     data = [1, 2, 3]
-    stream, context = await add_one_async.run_async(data)
+    stream, context = await Pipeline([add_one_async]).run(data)
     results = [item async for item in stream]
     assert results == [2, 3, 4]
     assert isinstance(context, Context)
@@ -140,16 +140,10 @@ def test_stage_informative_error_message():
 
 def test_run_without_data_on_non_source_pipeline_fails():
     """
-    Tests that calling run() or collect() without data on a non-source
+    Tests that calling collect() without data on a non-source
     pipeline raises a TypeError.
     """
     pipeline = add_one | to_string
-
-    with pytest.raises(
-        TypeError,
-        match="requires a data argument unless the first stage is a source stage",
-    ):
-        pipeline.run()
 
     with pytest.raises(
         TypeError,

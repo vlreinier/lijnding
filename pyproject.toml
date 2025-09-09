@@ -12,6 +12,7 @@ description = "A Composable Pipeline Framework for Python"
 readme = "README.md"
 requires-python = ">=3.8"
 dependencies = [
+    "nest_asyncio",
     "dill", # For robust serialization in the processing backend
     "structlog",
     "PyYAML>=6.0",

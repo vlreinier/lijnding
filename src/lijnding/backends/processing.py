@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import time
-from concurrent.futures import ProcessPoolExecutor
+import multiprocessing as mp
 from typing import TYPE_CHECKING, Any, AsyncIterator, AsyncIterable, List, Tuple
 import dill as serializer
+import queue
 
 from .base import (
     BaseRunner,
-    _handle_route_to_pipeline,
-    _handle_transform_and_retry,
 )
 from ..core.utils import ensure_iterable
 
@@ -17,48 +16,56 @@ if TYPE_CHECKING:
     from ..core.context import Context
     from ..core.stage import Stage
 
+SENTINEL = "__LIJNDING_WORKER_SENTINEL__"
 
 # This function runs in a separate process.
-def _worker_fn(
-    stage_payload: bytes, context_proxies: tuple | None, item: Any
-) -> Tuple[List[Any], dict, Exception | None]:
-    """
-    The target function for the process pool executor.
-    It deserializes the stage, runs the item through it, and returns
-    the results, metrics, and any error.
-    """
+def _worker_process(
+    in_queue: mp.Queue,
+    out_queue: mp.Queue,
+    stage_payload: bytes,
+    context_proxies: tuple | None,
+    worker_id: int,
+):
+    """Target function for each worker process."""
     from ..core.context import Context
 
     stage = serializer.loads(stage_payload)
     context = Context(_from_proxies=context_proxies)
 
-    # Minimal metrics for this single item
-    metrics = {"items_in": 1, "items_out": 0, "errors": 0, "time_total": 0.0}
+    if stage.hooks.on_worker_init:
+        context.worker_state = stage.hooks.on_worker_init(context) or {}
 
-    try:
-        item_start_time = time.perf_counter()
-        results = stage._invoke(context, item)
-        output = list(ensure_iterable(results))
-        item_elapsed = time.perf_counter() - item_start_time
+    while True:
+        try:
+            item = in_queue.get()
+            if item == SENTINEL:
+                break
 
-        metrics["items_out"] = len(output)
-        metrics["time_total"] = item_elapsed
-        return output, metrics, None
-    except Exception as e:
-        item_elapsed = time.perf_counter() - item_start_time
-        metrics["errors"] = 1
-        metrics["time_total"] = item_elapsed
-        # Return the exception to be re-raised in the main process
-        return [], metrics, e
+            results = stage._invoke(context, item)
+            output = list(ensure_iterable(results))
+            out_queue.put(output)
+
+        except Exception as e:
+            out_queue.put(e)
+
+    out_queue.put(SENTINEL)
+    if stage.hooks.on_worker_exit:
+        stage.hooks.on_worker_exit(context)
 
 
 class ProcessingRunner(BaseRunner):
     """
-    A runner that executes sync stages concurrently in a process pool.
+    A runner that executes sync stages concurrently in a manually managed
+    pool of processes.
     """
 
     async def _run_itemwise(
-        self, stage: "Stage", context: "Context", iterable: AsyncIterable[Any]
+        self,
+        stage: "Stage",
+        context: "Context",
+        iterable: AsyncIterable[Any],
+        *,
+        executor=None, # This is no longer used but kept for interface consistency
     ) -> AsyncIterator[Any]:
         """Processes items concurrently in a process pool."""
         stage.logger.info("stream_started", backend="processing", workers=stage.workers)
@@ -66,68 +73,77 @@ class ProcessingRunner(BaseRunner):
         total_items_in = 0
         total_items_out = 0
 
-        # Create a ProcessPoolExecutor
-        executor = ProcessPoolExecutor(max_workers=stage.workers)
+        try:
+            mp.set_start_method("spawn", force=True)
+        except RuntimeError:
+            pass
+
         loop = asyncio.get_running_loop()
 
-        # Get context proxies if the context is mp-safe
+        # We must use multiprocessing queues for inter-process communication
+        in_queue = mp.Queue(maxsize=stage.buffer_size or stage.workers)
+        out_queue = mp.Queue()
+
         context_proxies = (
             (context._data, context._lock) if getattr(context, "_mp_safe", False) else None
         )
-        if not context_proxies:
-            stage.logger.warning(
-                "Context is not multiprocessing-safe. Changes to context "
-                "in a 'process' backend stage will not be propagated."
-            )
-
-        # Serialize the stage once to send to all worker processes
         stage_payload = serializer.dumps(stage)
 
-        # Sentinel to signal the end of the stream
-        END_OF_QUEUE = object()
-        results_queue = asyncio.Queue()
-
-        async def _process_item(item):
-            """Submits one item to the process pool."""
-            future = loop.run_in_executor(
-                executor, _worker_fn, stage_payload, context_proxies, item
+        processes = []
+        for i in range(stage.workers):
+            process = mp.Process(
+                target=_worker_process,
+                args=(in_queue, out_queue, stage_payload, context_proxies, i),
+                daemon=True,
             )
-            await results_queue.put(future)
+            process.start()
+            processes.append(process)
 
         async def feeder():
-            """Feeds items from the input iterable to the worker tasks."""
-            tasks = [asyncio.create_task(_process_item(item)) async for item in iterable]
-            await asyncio.gather(*tasks)
-            await results_queue.put(END_OF_QUEUE)
+            """Feeds items from the async iterable to the input queue."""
+            nonlocal total_items_in
+            async for item in iterable:
+                total_items_in += 1
+                stage.metrics["items_in"] += 1
+                await loop.run_in_executor(None, in_queue.put, item)
+
+            for _ in range(stage.workers):
+                await loop.run_in_executor(None, in_queue.put, SENTINEL)
 
         feeder_task = asyncio.create_task(feeder())
 
+        finished_workers = 0
         try:
-            while True:
-                future_or_sentinel = await results_queue.get()
-                if future_or_sentinel is END_OF_QUEUE:
-                    break
+            while finished_workers < stage.workers:
+                try:
+                    # Run the blocking get() in a thread to not block the event loop
+                    result = await loop.run_in_executor(None, out_queue.get)
+                except queue.Empty:
+                    await asyncio.sleep(0.001) # Should not happen with blocking get
+                    continue
 
-                future = future_or_sentinel
-                output, metrics, error = await future
+                if result == SENTINEL:
+                    finished_workers += 1
+                    continue
 
-                # Update metrics in the main process
-                for key, value in metrics.items():
-                    stage.metrics[key] += value
-
-                total_items_in += metrics["items_in"]
-                total_items_out += metrics["items_out"]
-
-                if error:
+                if isinstance(result, Exception):
                     # TODO: Add retry logic here
-                    raise error
+                    raise result
 
-                for res in output:
+                # result is a list of items from the worker
+                for res in result:
+                    total_items_out += 1
+                    stage.metrics["items_out"] += 1
                     yield res
         finally:
             if not feeder_task.done():
                 feeder_task.cancel()
-            executor.shutdown(wait=True)
+
+            # Ensure all processes are cleaned up
+            for p in processes:
+                p.join(timeout=1.0)
+                if p.is_alive():
+                    p.terminate()
 
             total_duration = time.perf_counter() - stream_start_time
             stage.logger.info(

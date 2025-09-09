@@ -20,6 +20,7 @@ from typing import (
 )
 import time
 import asyncio
+from concurrent.futures import ProcessPoolExecutor
 
 from ..backends.runner_registry import get_runner
 from .context import Context
@@ -177,11 +178,19 @@ class Pipeline:
             stream = data  # type: ignore
 
         exception: Optional[Exception] = None
-        context.on_run_start(self)
+        executor: Optional[ProcessPoolExecutor] = None
+
+        # If any stage uses the 'process' backend, create a shared executor for the
+        # entire pipeline run. This is more efficient and avoids deadlocks.
+        if "process" in self._get_required_backend_names():
+            executor = ProcessPoolExecutor()
+
         try:
+            context.on_run_start(self)
             for index, stage_obj in enumerate(self.stages):
                 runner = get_runner(getattr(stage_obj, "backend", "serial"))
-                stream = runner.run(stage_obj, context, stream, index)
+                # Pass the shared executor to the runner
+                stream = runner.run(stage_obj, context, stream, index, executor=executor)
 
             return stream, context
         except Exception as e:
@@ -189,7 +198,12 @@ class Pipeline:
             self.logger.error("Pipeline failed", exception=str(e), exc_info=True)
             raise
         finally:
+            if executor:
+                self.logger.debug("Shutting down process pool executor.")
+                executor.shutdown(wait=True)
+
             context.on_run_finish(self, exception)
+            context.shutdown()  # Shut down the context's resources (e.g., mp manager)
             end_time = time.time()
             total_time = end_time - start_time
             self.logger.info(f"Pipeline run finished in {total_time:.4f} seconds.")

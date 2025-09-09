@@ -1,14 +1,37 @@
 import pytest
 from lijnding.core import Pipeline, stage
 from tests.helpers.test_runner import run_pipeline, BACKENDS
+import asyncio
+
+@stage
+def add_one_sync(x):
+    return x + 1
+
+@stage
+def times_two_sync(x):
+    return x * 2
+
+@stage(backend="async")
+async def add_one_async(x):
+    await asyncio.sleep(0.001)
+    return x + 1
+
+@stage(backend="async")
+async def times_two_async(x):
+    await asyncio.sleep(0.001)
+    return x * 2
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
 @pytest.mark.asyncio
 async def test_multi_stage_transformation(backend):
     """Tests a pipeline with multiple simple transformation stages."""
-    add_one = stage(lambda x: x + 1, backend=backend)
-    times_two = stage(lambda x: x * 2, backend=backend)
+    if backend == 'async':
+        add_one = add_one_async
+        times_two = times_two_async
+    else:
+        add_one = stage(add_one_sync.func, backend=backend)
+        times_two = stage(times_two_sync.func, backend=backend)
 
     pipeline = Pipeline([add_one, times_two])
     data = [1, 2, 3]

@@ -23,7 +23,12 @@ class AsyncioRunner(BaseRunner):
     """
 
     async def _run_itemwise(
-        self, stage: "Stage", context: "Context", iterable: AsyncIterable[Any]
+        self,
+        stage: "Stage",
+        context: "Context",
+        iterable: AsyncIterable[Any],
+        *,
+        executor=None,
     ) -> AsyncIterator[Any]:
         """Processes items concurrently using asyncio, with structured logging."""
         stage.logger.info("stream_started", backend="asyncio", workers=stage.workers)

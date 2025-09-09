@@ -25,7 +25,12 @@ class SerialRunner(BaseRunner):
     """
 
     async def _run_itemwise(
-        self, stage: "Stage", context: "Context", iterable: AsyncIterable[Any]
+        self,
+        stage: "Stage",
+        context: "Context",
+        iterable: AsyncIterable[Any],
+        *,
+        executor=None,
     ) -> AsyncIterator[Any]:
         """
         Processes items one by one in a simple async loop.
