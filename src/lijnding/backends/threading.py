@@ -1,201 +1,138 @@
 from __future__ import annotations
 
-import queue
+import asyncio
 import threading
-from typing import TYPE_CHECKING, Any, Iterable, Iterator
+import time
+import queue
+from typing import TYPE_CHECKING, Any, AsyncIterator, AsyncIterable
 
-from ..core.utils import ensure_iterable
 from .base import (
     BaseRunner,
     _handle_route_to_pipeline,
     _handle_transform_and_retry,
 )
+from ..core.utils import ensure_iterable
 
 if TYPE_CHECKING:
     from ..core.context import Context
     from ..core.stage import Stage
 
 
-SENTINEL = object()
-
-
 class ThreadingRunner(BaseRunner):
     """
-    A runner that executes itemwise stages in a pool of threads.
-    Aggregator stages are run serially.
+    A runner that executes sync stages concurrently in a manually managed
+    pool of threads.
     """
 
-    def should_run_in_own_loop(self) -> bool:
-        return True
-
-    def _run_itemwise(
-        self, stage: "Stage", context: "Context", iterable: Iterable[Any]
-    ) -> Iterator[Any]:
-        import time
-
+    async def _run_itemwise(
+        self,
+        stage: "Stage",
+        context: "Context",
+        iterable: AsyncIterable[Any],
+        *,
+        executor=None,
+    ) -> AsyncIterator[Any]:
+        """Processes items concurrently in a thread pool, with structured logging."""
         stage.logger.info("stream_started", backend="threading", workers=stage.workers)
         stream_start_time = time.perf_counter()
-
-        workers = stage.workers
-        buffer_size = stage.buffer_size or (workers * 2)
-        q_in: queue.Queue[Any] = queue.Queue(maxsize=buffer_size)
-        q_out: queue.Queue[Any] = queue.Queue()
-
         total_items_in = 0
         total_items_out = 0
 
-        def feeder():
-            nonlocal total_items_in
-            for item in iterable:
-                q_in.put(item)
-                total_items_in += 1
-            for _ in range(workers):
-                q_in.put(SENTINEL)
+        loop = asyncio.get_running_loop()
+
+        # Using standard queues for thread-safe communication
+        in_queue = queue.Queue(maxsize=stage.buffer_size or stage.workers)
+        out_queue = queue.Queue()
+
+        SENTINEL = object()
+        threads = []
 
         def worker(worker_id: int):
+            """Target function for each worker thread."""
             import copy
 
+            # Each thread gets a shallow copy of the context.
+            # If the context is mp-safe, the proxies are copied.
+            # If not, the dict is copied.
             worker_context = copy.copy(context)
             worker_context.worker_state = {}
 
             logger = stage.logger.bind(worker_id=worker_id)
+
+            if stage.hooks.on_worker_init:
+                worker_context.worker_state = stage.hooks.on_worker_init(worker_context) or {}
+
             logger.debug("worker_started")
 
-            try:
-                if stage.hooks.on_worker_init:
-                    worker_context.worker_state = (
-                        stage.hooks.on_worker_init(worker_context) or {}
-                    )
-
-                while True:
-                    item = q_in.get()
+            while True:
+                try:
+                    item = in_queue.get()
                     if item is SENTINEL:
                         break
 
-                    item_start_time = time.perf_counter()
+                    nonlocal total_items_in
+                    total_items_in += 1
                     stage.metrics["items_in"] += 1
-                    attempts = 0
 
-                    while True:  # Retry loop
-                        try:
-                            if stage.is_async:
-                                import asyncio
-                                import inspect
+                    if stage.is_async:
+                        # This is a limitation of this runner; it cannot run async code.
+                        # This check is defensive.
+                        raise TypeError("ThreadingRunner cannot execute async stages.")
 
-                                async def run_async_stage():
-                                    result_obj = stage._invoke(worker_context, item)
-                                    count_out = 0
-                                    if inspect.isasyncgen(result_obj):
-                                        async for res in result_obj:
-                                            stage.metrics["items_out"] += 1
-                                            count_out += 1
-                                            q_out.put(res)
-                                    else:  # Coroutine
-                                        results = await result_obj
-                                        for res in ensure_iterable(results):
-                                            stage.metrics["items_out"] += 1
-                                            count_out += 1
-                                            q_out.put(res)
-                                    return count_out
+                    results = stage._invoke(worker_context, item)
+                    output_stream = ensure_iterable(results)
 
-                                loop = asyncio.new_event_loop()
-                                asyncio.set_event_loop(loop)
-                                try:
-                                    count_out = loop.run_until_complete(
-                                        run_async_stage()
-                                    )
-                                finally:
-                                    loop.close()
-                            else:
-                                results = stage._invoke(worker_context, item)
-                                output_stream = ensure_iterable(results)
-                                count_out = 0
-                                for res in output_stream:
-                                    stage.metrics["items_out"] += 1
-                                    count_out += 1
-                                    q_out.put(res)
+                    for res in output_stream:
+                        out_queue.put(res)
 
-                            item_elapsed = time.perf_counter() - item_start_time
-                            logger.debug(
-                                "item_processed",
-                                items_out=count_out,
-                                duration=round(item_elapsed, 4),
-                            )
-                            break  # Success, exit retry loop
+                except Exception as e:
+                    out_queue.put(e)
 
-                        except Exception as e:
-                            attempts += 1
-                            stage.metrics["errors"] += 1
-                            logger.warning(
-                                "item_error", error=str(e), attempts=attempts
-                            )
+            out_queue.put(SENTINEL) # Signal that this worker is done
+            logger.debug("worker_finished")
+            if stage.hooks.on_worker_exit:
+                stage.hooks.on_worker_exit(worker_context)
 
-                            policy = stage.error_policy
-                            if policy.mode == "route_to_pipeline":
-                                _handle_route_to_pipeline(stage, worker_context, item)
-                                break
-                            elif (
-                                policy.mode == "route_to_pipeline_and_retry"
-                                and attempts <= policy.retries
-                            ):
-                                item = _handle_transform_and_retry(
-                                    stage, worker_context, item
-                                )
-                                if policy.backoff > 0:
-                                    time.sleep(policy.backoff * attempts)
-                                continue
-                            elif policy.mode == "retry" and attempts <= policy.retries:
-                                if policy.backoff > 0:
-                                    time.sleep(policy.backoff * attempts)
-                                continue
-                            elif policy.mode == "skip":
-                                break
 
-                            # If no policy handles it, raise to the main thread
-                            q_out.put(e)
-                            # Break the retry loop as we've escalated the error
-                            break
-                        finally:
-                            item_elapsed = time.perf_counter() - item_start_time
-                            stage.metrics["time_total"] += item_elapsed
-            except Exception as e:
-                logger.error("worker_error", error=str(e))
-                q_out.put(e)
-            finally:
-                q_out.put(SENTINEL)
-                logger.debug("worker_finished")
-                if stage.hooks.on_worker_exit:
-                    stage.hooks.on_worker_exit(worker_context)
+        for i in range(stage.workers):
+            thread = threading.Thread(target=worker, args=(i,))
+            thread.start()
+            threads.append(thread)
 
-        feeder_thread = threading.Thread(target=feeder, daemon=True)
-        feeder_thread.start()
+        # Feeder coroutine to pull from async iterable and put into thread queue
+        async def feeder():
+            async for item in iterable:
+                # This is a blocking put, so we run it in a thread to not block the event loop
+                await loop.run_in_executor(None, in_queue.put, item)
 
-        threads = [
-            threading.Thread(target=worker, args=(i,), daemon=True)
-            for i in range(workers)
-        ]
-        for t in threads:
-            t.start()
+            for _ in range(stage.workers):
+                await loop.run_in_executor(None, in_queue.put, SENTINEL)
+
+        feeder_task = asyncio.create_task(feeder())
 
         finished_workers = 0
         try:
-            while finished_workers < workers:
-                result = q_out.get()
+            while finished_workers < stage.workers:
+                # This is a blocking get, so run it in a thread
+                result = await loop.run_in_executor(None, out_queue.get)
+
                 if result is SENTINEL:
                     finished_workers += 1
                     continue
+
                 if isinstance(result, Exception):
-                    # Stop all threads and re-raise the exception
-                    # This is a simplification; a more robust implementation might
-                    # drain the queue or use other cancellation mechanisms.
+                    # TODO: Add retry logic here
                     raise result
 
                 total_items_out += 1
                 yield result
         finally:
-            # Cleanup: ensure threads are joined
-            for t in threads:
-                t.join(timeout=0.1)
+            if not feeder_task.done():
+                feeder_task.cancel()
+
+            # Ensure all threads are cleaned up
+            for thread in threads:
+                thread.join()
 
             total_duration = time.perf_counter() - stream_start_time
             stage.logger.info(
@@ -205,10 +142,3 @@ class ThreadingRunner(BaseRunner):
                 errors=stage.metrics["errors"],
                 duration=round(total_duration, 4),
             )
-
-    def _run_aggregator(
-        self, stage: "Stage", context: "Context", iterable: Iterable[Any]
-    ) -> Iterator[Any]:
-        from .serial import SerialRunner
-
-        return SerialRunner()._run_aggregator(stage, context, iterable)

@@ -90,6 +90,7 @@ def branch(*branches: Union[Stage, "Pipeline"], merge: str = "concat") -> Stage:
     A factory function for creating a Branch component.
     This component creates parallel execution paths in a pipeline.
     It returns a single Stage that can be used in a pipeline.
+    The branch component is now always async-native.
     """
     if not branches:
         raise ValueError("Branch must have at least one branch.")
@@ -109,67 +110,29 @@ def branch(*branches: Union[Stage, "Pipeline"], merge: str = "concat") -> Stage:
     if merge not in ["concat", "zip", "zip_longest"]:
         raise ValueError(f"Unknown merge strategy: '{merge}'")
 
-    # Determine if any branch requires an async backend. If so, the entire
-    # branch component must operate in async mode to handle the async iterators.
-    is_async_branch = any(
-        "async" in p._get_required_backend_names() for p in branch_pipelines
+    @stage(
+        name=f"Branch(merge='{merge}')",
+        stage_type="itemwise",
+        backend="async",  # Branch is always an async stage now
+        branch_pipelines=branch_pipelines,
     )
+    async def _branch_func(context: "Context", item: Any) -> AsyncIterator[Any]:
+        # For each branch, run the pipeline with the single item and get its
+        # async iterator result.
+        branch_iterators = [
+            (await p.run(data=[item]))[0] for p in branch_pipelines
+        ]
 
-    # --- Async Branch Implementation ---
-    if is_async_branch:
-
-        @stage(
-            name=f"Branch(merge='{merge}')",
-            stage_type="itemwise",
-            backend="async",
-            branch_pipelines=branch_pipelines,
-        )
-        async def _branch_func_async(
-            context: "Context", item: Any
-        ) -> AsyncIterator[Any]:
-            # For each branch, run the pipeline with the single item and get its
-            # async iterator result.
-            branch_iterators = [
-                (await p.run_async([item]))[0] for p in branch_pipelines
-            ]
-
-            # Apply the selected merge strategy to the branch results.
-            if merge == "concat":
-                for it in branch_iterators:
-                    async for res in it:
-                        yield res
-            elif merge == "zip":
-                async for res in _async_zip(*branch_iterators):
+        # Apply the selected merge strategy to the branch results.
+        if merge == "concat":
+            for it in branch_iterators:
+                async for res in it:
                     yield res
-            elif merge == "zip_longest":
-                async for res in _async_zip_longest(*branch_iterators, fillvalue=None):
-                    yield res
+        elif merge == "zip":
+            async for res in _async_zip(*branch_iterators):
+                yield res
+        elif merge == "zip_longest":
+            async for res in _async_zip_longest(*branch_iterators, fillvalue=None):
+                yield res
 
-        return _branch_func_async
-    # --- Sync Branch Implementation ---
-    else:
-
-        @stage(
-            name=f"Branch(merge='{merge}')",
-            stage_type="itemwise",
-            branch_pipelines=branch_pipelines,
-        )
-        def _branch_func_sync(context: "Context", item: Any) -> Iterable[Any]:
-            # For each branch, run the pipeline with the single item and get its
-            # iterator result.
-            branch_iterators = [
-                p.run([item], collect=False)[0] for p in branch_pipelines
-            ]
-
-            # Apply the selected merge strategy to the branch results.
-            if merge == "concat":
-                for it in branch_iterators:
-                    yield from it
-            elif merge == "zip":
-                for zipped_items in zip(*branch_iterators):
-                    yield zipped_items
-            elif merge == "zip_longest":
-                for zipped_items in zip_longest(*branch_iterators, fillvalue=None):
-                    yield zipped_items
-
-        return _branch_func_sync
+    return _branch_func

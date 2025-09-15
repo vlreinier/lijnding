@@ -73,3 +73,25 @@ class Context:
 
     def __repr__(self) -> str:
         return f"Context(mp_safe={self._mp_safe}, data={self.to_dict()})"
+
+    def on_run_start(self, pipeline):
+        """Hook called at the start of a pipeline run."""
+        pass
+
+    def on_run_finish(self, pipeline, exception: Optional[Exception] = None):
+        """Hook called at the end of a pipeline run."""
+        pass
+
+    def on_stage_start(self, stage, index: int):
+        """Hook called at the start of each stage."""
+        pass
+
+    def on_stage_error(self, stage, exception: Exception):
+        """Hook called when a stage encounters an error during processing."""
+        pass
+
+    def shutdown(self):
+        """Shuts down any background processes, like a multiprocessing.Manager."""
+        if self._manager:
+            self.logger.debug("Shutting down multiprocessing manager for context.")
+            self._manager.shutdown()

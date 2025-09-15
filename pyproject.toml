@@ -12,6 +12,7 @@ description = "A Composable Pipeline Framework for Python"
 readme = "README.md"
 requires-python = ">=3.8"
 dependencies = [
+    "nest_asyncio",
     "dill", # For robust serialization in the processing backend
     "structlog",
     "PyYAML>=6.0",
@@ -29,6 +30,9 @@ classifiers = [
 "Bug Tracker" = "https://github.com/example/lijnding/issues"
 
 [project.optional-dependencies]
+orchestration = [
+    "SQLAlchemy>=2.0",
+]
 test = [
     "pytest>=8.0",
     "pytest-asyncio",
@@ -37,7 +41,7 @@ test = [
     "myst-parser",
 ]
 test-all = [
-    "lijnding-core[test]",
+    "lijnding-core[test,orchestration]",
     "lijnding-http[test]",
     "lijnding-rabbitmq[test]",
 ]

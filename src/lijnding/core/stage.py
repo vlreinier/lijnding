@@ -144,35 +144,11 @@ class Stage:
         pipeline = Pipeline([self], name=self.name)
         return pipeline.visualize()
 
-    def run(
-        self,
-        data: Optional[Iterable[Any]] = None,
-        *,
-        collect: bool = False,
-        config_path: Optional[str] = None,
-    ) -> Tuple[Union[List[Any], Iterable[Any]], Context]:
-        """Executes the stage as a single-stage pipeline.
-
-        This is a convenience method for running a single stage without
-        explicitly creating a `Pipeline` object.
-
-        Args:
-            data: An iterable of data to process.
-            collect: If True, returns the results as a list.
-            config_path: Path to a YAML configuration file.
-
-        Returns:
-            A tuple containing the results and the execution context.
-        """
-        from .pipeline import Pipeline
-
-        pipeline = Pipeline([self])
-        return pipeline.run(data, collect=collect, config_path=config_path)
-
     def collect(
         self, data: Optional[Iterable[Any]] = None, config_path: Optional[str] = None
     ) -> Tuple[List[Any], Context]:
-        """Executes the stage and collects all results into a list.
+        """Executes the stage as a single-stage pipeline and collects all
+        results into a list.
 
         Args:
             data: An iterable of data to process.
@@ -185,25 +161,6 @@ class Stage:
 
         pipeline = Pipeline([self])
         return pipeline.collect(data, config_path=config_path)
-
-    async def run_async(
-        self,
-        data: Optional[Union[Iterable[Any], AsyncIterable[Any]]] = None,
-        config_path: Optional[str] = None,
-    ) -> Tuple[AsyncIterator[Any], Context]:
-        """Asynchronously executes the stage as a single-stage pipeline.
-
-        Args:
-            data: An iterable or async iterable of data to process.
-            config_path: Path to a YAML configuration file.
-
-        Returns:
-            A tuple containing an async iterator for the results and the context.
-        """
-        from .pipeline import Pipeline
-
-        pipeline = Pipeline([self])
-        return await pipeline.run_async(data, config_path=config_path)
 
     def _invoke(self, context: Context, *args: Any, **kwargs: Any) -> Any:
         """Invokes the wrapped function, injecting context if required."""
@@ -226,8 +183,14 @@ class Stage:
         from .pipeline import Pipeline
 
         if hasattr(Pipeline, name):
-            if name in ("run", "run_async", "collect"):
-                raise AttributeError(f"'Stage' object has no attribute '{name}'")
+            if name == "run":
+                raise AttributeError(
+                    f"'Stage' object has no attribute 'run'. The pipeline is now async-native. "
+                    f"Please use 'Pipeline([stage]).collect(...)' for a blocking call, or "
+                    f"'await Pipeline([stage]).run(...)' in an async context."
+                )
+            if name == "collect":
+                 raise AttributeError(f"'Stage' object has no attribute '{name}'")
 
             message = (
                 f"'Stage' object has no attribute '{name}'. "
