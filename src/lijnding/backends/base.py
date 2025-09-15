@@ -29,7 +29,6 @@ class BaseRunner(ABC):
         iterable: AsyncIterable[Any],
         index: int,
         *,
-        executor: Optional[ProcessPoolExecutor] = None,
     ) -> AsyncIterator[Any]:
         """
         Executes the stage. This is the main entry point for a runner.
@@ -49,11 +48,11 @@ class BaseRunner(ABC):
                     yield res
 
         elif stage.stage_type == "aggregator":
-            async for res in self._run_aggregator(stage, context, iterable, executor=executor):
+            async for res in self._run_aggregator(stage, context, iterable):
                 yield res
         else:
             # Default to itemwise processing
-            async for res in self._run_itemwise(stage, context, iterable, executor=executor):
+            async for res in self._run_itemwise(stage, context, iterable):
                 yield res
 
     @abstractmethod
@@ -63,7 +62,6 @@ class BaseRunner(ABC):
         context: "Context",
         iterable: AsyncIterable[Any],
         *,
-        executor: Optional[ProcessPoolExecutor] = None,
     ) -> AsyncIterator[Any]:
         """
         Processes an iterable item by item.
@@ -77,7 +75,6 @@ class BaseRunner(ABC):
         context: "Context",
         iterable: AsyncIterable[Any],
         *,
-        executor: Optional[ProcessPoolExecutor] = None,
     ) -> AsyncIterator[Any]:
         """
         Processes an entire iterable at once with structured logging.

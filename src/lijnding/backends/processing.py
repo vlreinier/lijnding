@@ -65,7 +65,6 @@ class ProcessingRunner(BaseRunner):
         context: "Context",
         iterable: AsyncIterable[Any],
         *,
-        executor=None, # This is no longer used but kept for interface consistency
     ) -> AsyncIterator[Any]:
         """Processes items concurrently in a process pool."""
         stage.logger.info("stream_started", backend="processing", workers=stage.workers)
