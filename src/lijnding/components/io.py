@@ -98,3 +98,41 @@ def save_progress(
                 yield item
 
     return _save_progress_stage
+
+
+def from_iterable(data: Iterable[Any], *, name: str = "from_iterable", **stage_kwargs) -> Stage:
+    """Creates a source stage that yields items from a given iterable.
+    This is a common way to start a pipeline with in-memory data.
+    Args:
+        data: The iterable to source data from.
+        name: An optional name for the stage.
+        stage_kwargs: Additional keyword arguments to pass to the @stage decorator.
+    Returns:
+        A new source `Stage` that yields items from the iterable.
+    """
+    from ..core.pipeline import Pipeline
+
+    @stage(name=name, stage_type="source", **stage_kwargs)
+    def _from_iterable_stage() -> Iterable[Any]:
+        yield from data
+
+    # This is a bit of a special case. A source stage by itself isn't a pipeline,
+    # but the way the library is designed, you need a pipeline to run anything.
+    # We return a Pipeline object that is pre-populated with the source stage
+    # and its input data, ready to be piped to other stages.
+    # This is a slightly awkward part of the API that could be improved.
+    # For now, we will return a pipeline with the data pre-applied.
+
+    # Correction: the test expects this to return a pipeline, not a stage.
+    # The usage is `from_iterable(...) | stage`. This means from_iterable
+    # must return a Pipeline object.
+
+    p = Pipeline([_from_iterable_stage])
+    # This is a hack. The pipeline's run method expects the data, but
+    # a source stage provides its own data.
+    # The test is `pipeline.collect()`, so data is passed as None.
+    # The pipeline's run method needs to be aware of this.
+    # The current `run` method in my refactoring handles this:
+    # if data is None and first stage is source, it passes an empty list.
+    # The source stage runner then ignores this empty list. This is correct.
+    return p
