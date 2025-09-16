@@ -135,14 +135,11 @@ class Pipeline:
         *,
         collect: bool = False,
         config_path: Optional[str] = None,
-        context: Optional[Context] = None,
     ) -> Tuple[Union[List[Any], Iterable[Any]], Context]:
         """Runs the pipeline synchronously.
 
         This method executes the pipeline stages in order, passing the output of
-        one stage as the input to the next. It is aware of pipelines that
-        contain async stages and will handle them correctly, even if called
-        from a running event loop.
+        one stage as the input to the next.
 
         Args:
             data: An iterable of input data to be fed into the pipeline. If the
@@ -152,8 +149,6 @@ class Pipeline:
                 returned, allowing for streaming processing.
             config_path: The path to a YAML configuration file to be loaded into
                 the pipeline's context.
-            context: An optional existing `Context` object to use. If not
-                provided, a new one will be created.
 
         Returns:
             A tuple containing the pipeline's output (either a list or an
@@ -161,46 +156,8 @@ class Pipeline:
         """
         self.logger.info("Pipeline run started.")
         start_time = time.time()
-
-        # If the pipeline contains an async stage, we need to use the async runner
-        if "async" in self._get_required_backend_names():
-
-            async def _run_and_collect():
-                stream, ctx = await self.run_async(
-                    data, config_path=config_path, context=context
-                )
-                if collect:
-                    return [item async for item in stream], ctx
-                return stream, ctx
-
-            try:
-                loop = asyncio.get_running_loop()
-                if loop.is_running():
-                    # If we're in a running loop, we can't block it.
-                    # We run the async code in a separate thread with its own loop.
-                    import threading
-
-                    result_container = {}
-
-                    def thread_target():
-                        result_container["result"] = asyncio.run(_run_and_collect())
-
-                    thread = threading.Thread(target=thread_target)
-                    thread.start()
-                    thread.join()
-                    return result_container["result"]
-            except RuntimeError:
-                # No loop is running, so we can start one.
-                pass
-
-            return asyncio.run(_run_and_collect())
-
-        # --- Original synchronous path ---
         config = load_config(config_path)
-        if context is None:
-            context = self._build_context(config)
-        elif config:
-            context.config = config
+        context = self._build_context(config)
 
         if data is None:
             if not self.stages or self.stages[0].stage_type != "source":
@@ -217,13 +174,18 @@ class Pipeline:
                 stream = runner.run(stage_obj, context, stream)
 
             if collect:
-                # This check is now less likely to be hit here, but kept for safety.
                 if hasattr(stream, "__aiter__"):
 
                     async def _collect_async(async_stream):
                         return [item async for item in async_stream]
 
-                    return asyncio.run(_collect_async(stream)), context
+                    try:
+                        loop = asyncio.get_running_loop()
+                    except RuntimeError:
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+
+                    return loop.run_until_complete(_collect_async(stream)), context
                 else:
                     return list(stream), context
             return stream, context
@@ -233,34 +195,25 @@ class Pipeline:
             self.logger.info(f"Pipeline run finished in {total_time:.4f} seconds.")
 
     def collect(
-        self,
-        data: Optional[Iterable[Any]] = None,
-        *,
-        config_path: Optional[str] = None,
-        context: Optional[Context] = None,
+        self, data: Optional[Iterable[Any]] = None, config_path: Optional[str] = None
     ) -> Tuple[List[Any], Context]:
         """A convenience method that runs the pipeline and collects all results into a list.
 
         Args:
             data: An iterable of input data.
             config_path: The path to a YAML configuration file.
-            context: An optional existing `Context` object to use.
 
         Returns:
             A tuple containing a list of the pipeline's output and the final
             `Context` object.
         """
-        stream, context_obj = self.run(
-            data, collect=True, config_path=config_path, context=context
-        )
-        return stream, context_obj  # type: ignore
+        stream, context = self.run(data, collect=True, config_path=config_path)
+        return stream, context  # type: ignore
 
     async def run_async(
         self,
         data: Optional[Union[Iterable[Any], AsyncIterable[Any]]] = None,
-        *,
         config_path: Optional[str] = None,
-        context: Optional[Context] = None,
     ) -> Tuple[AsyncIterator[Any], Context]:
         """Asynchronously executes the pipeline.
 
@@ -270,8 +223,6 @@ class Pipeline:
         Args:
             data: An iterable or async iterable of input data.
             config_path: The path to a YAML configuration file.
-            context: An optional existing `Context` object to use. If not
-                provided, a new one will be created.
 
         Returns:
             A tuple containing an async iterator for the pipeline's output and
@@ -280,11 +231,7 @@ class Pipeline:
         self.logger.info("Async pipeline run started.")
         start_time = time.time()
         config = load_config(config_path)
-
-        if context is None:
-            context = self._build_context(config)
-        elif config:
-            context.config = config
+        context = self._build_context(config)
 
         if data is None:
             if not self.stages or self.stages[0].stage_type != "source":

@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Any, Callable, Iterable, Optional, Generator
 import functools
 
-from ..core.stage import Stage, aggregator_stage
+from ..core.stage import Stage, generator_stage
 
 
 def reduce_(
@@ -17,8 +17,8 @@ def reduce_(
     """
     Creates a stage that reduces an entire input stream to a single value.
 
-    This is an aggregator stage. It consumes all items from the input and
-    applies a reduction function, yielding a single result. It is a wrapper
+    This is a generator stage that consumes all items from the input stream
+    and applies a reduction function, yielding a single result. It is a wrapper
     around Python's `functools.reduce`.
 
     Args:
@@ -29,7 +29,7 @@ def reduce_(
         A Stage configured to perform the reduction.
     """
 
-    @aggregator_stage(name="reduce")
+    @generator_stage(name="reduce")
     def _reduce_func(iterable: Iterable[Any]) -> Generator[Any, None, None]:
         iterator = iter(iterable)
 

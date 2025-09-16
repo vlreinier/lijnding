@@ -334,8 +334,9 @@ def aggregator_stage(
     """A decorator to create an aggregator stage.
 
     This is a convenience decorator equivalent to `@stage(stage_type="aggregator")`.
-    Aggregator stages receive the entire input stream as a single iterable
-    argument.
+    Aggregator stages receive the entire input stream as a single, materialized
+    list of items. This is for operations that need the full dataset at once,
+    like `sort` or `median`.
 
     Example:
         .. code-block:: python
@@ -354,6 +355,63 @@ def aggregator_stage(
         _func,
         name=name,
         stage_type="aggregator",
+        backend=backend,
+        workers=workers,
+        buffer_size=buffer_size,
+        input_type=input_type,
+        output_type=output_type,
+        error_policy=error_policy,
+        hooks=hooks,
+        branch_pipelines=branch_pipelines,
+        wrapped_pipeline=wrapped_pipeline,
+    )
+
+
+def generator_stage(
+    _func: Optional[Callable[..., Any]] = None,
+    *,
+    name: Optional[str] = None,
+    backend: str = "serial",
+    workers: int = 1,
+    buffer_size: Optional[int] = None,
+    input_type: Optional[Type[Any]] = None,
+    output_type: Optional[Type[Any]] = None,
+    error_policy: Optional[ErrorPolicy] = None,
+    hooks: Optional[Hooks] = None,
+    branch_pipelines: Optional[List["Pipeline"]] = None,
+    wrapped_pipeline: Optional["Pipeline"] = None,
+) -> Union[Stage, Callable[[Callable[..., Any]], Stage]]:
+    """A decorator to create a generator stage.
+
+    This is a convenience decorator equivalent to `@stage(stage_type="generator")`.
+    Generator stages are for stateful, streaming transformations. They receive
+    an iterator and are expected to yield items as they are produced. This is
+    ideal for operations like batching, windowing, or running averages.
+
+    Example:
+        .. code-block:: python
+
+            @generator_stage
+            def batch(items: Iterable[Any], size=10) -> Iterable[List[Any]]:
+                batch = []
+                for item in items:
+                    batch.append(item)
+                    if len(batch) >= size:
+                        yield batch
+                        batch = []
+                if batch:
+                    yield batch
+
+    Args:
+        All arguments from the `@stage` decorator are accepted here.
+
+    Returns:
+        A `Stage` object or a decorator, same as `@stage`.
+    """
+    return stage(
+        _func,
+        name=name,
+        stage_type="generator",
         backend=backend,
         workers=workers,
         buffer_size=buffer_size,

@@ -76,9 +76,9 @@ def save_progress(
 ) -> Stage:
     """Creates a pass-through stage that writes each item to a file and then yields it.
 
+    This is a true streaming component that writes items as they pass through.
     This is useful for checkpointing the progress of a pipeline. The file is
-    opened in append mode, so it can be used across multiple runs to create a
-    log of all processed items.
+    opened in append mode.
 
     Args:
         filepath: The path to the checkpoint file.
@@ -89,8 +89,9 @@ def save_progress(
     Returns:
         A new `Stage` that saves progress and passes items through.
     """
+    from ..core.stage import generator_stage
 
-    @aggregator_stage(name=name, **stage_kwargs)
+    @generator_stage(name=name, **stage_kwargs)
     def _save_progress_stage(items: Iterable[Any]) -> Generator[Any, None, None]:
         with open(filepath, "a", encoding="utf-8") as f:
             for item in items:

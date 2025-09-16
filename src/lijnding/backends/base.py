@@ -32,9 +32,21 @@ class BaseRunner(ABC):
             return ensure_iterable(stage._invoke(context))
         if stage.stage_type == "aggregator":
             return self._run_aggregator(stage, context, iterable)
+        if stage.stage_type == "generator":
+            return self._run_generator(stage, context, iterable)
 
         # Default to itemwise processing
         return self._run_itemwise(stage, context, iterable)
+
+    def _run_generator(
+        self, stage: "Stage", context: "Context", iterable: Iterable[Any]
+    ) -> Iterator[Any]:
+        """
+        Processes an iterable with a generator stage.
+        This default implementation simply calls the stage function with the
+        iterable and yields from the result. It does not materialize the input.
+        """
+        return ensure_iterable(stage._invoke(context, iterable))
 
     @abstractmethod
     def _run_itemwise(
