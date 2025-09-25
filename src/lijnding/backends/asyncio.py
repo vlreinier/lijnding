@@ -9,7 +9,7 @@ from .base import (
     _handle_route_to_pipeline_async,
     _handle_transform_and_retry_async,
 )
-from ..core.utils import ensure_iterable
+from ..core.utils import ensure_iterable, AsyncToSyncIterator
 
 if TYPE_CHECKING:
     from ..core.context import Context
@@ -66,7 +66,30 @@ class AsyncioRunner(BaseRunner):
                     items_out=items_out,
                     duration=round(duration, 4),
                 )
-        else:
+        elif stage.stage_type == "generator":
+            # A generator stage takes the entire iterable at once. This is
+            # fundamentally different from an itemwise stage.
+            if stage.is_async:
+                async for res in stage._invoke(context, iterable):
+                    yield res
+            else:
+                # For sync generators in an async pipeline, we need to
+                # run the generator in a thread to avoid blocking the loop.
+                loop = asyncio.get_running_loop()
+                sync_iterable = AsyncToSyncIterator(iterable, loop)
+
+                def run_sync_gen_in_thread():
+                    # This will run the generator to completion and buffer
+                    # results, which is not ideal for memory but consistent
+                    # with how other sync stages are handled in `run_async`.
+                    return list(stage._invoke(context, sync_iterable))
+
+                results = await loop.run_in_executor(
+                    None, run_sync_gen_in_thread
+                )
+                for res in results:
+                    yield res
+        else:  # itemwise
             # Itemwise processing delegates to the async itemwise runner
             async for res in self._run_itemwise_async(stage, context, iterable):
                 yield res
