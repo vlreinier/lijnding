@@ -10,11 +10,10 @@ SENTINEL = object()
 class AsyncToSyncIterator:
     """
     Wraps an async iterator into a sync iterator, allowing it to be used
-    in a synchronous context (like a for loop). This is useful for bridging
-    async and sync parts of a pipeline.
+    in a synchronous context (like a for loop).
 
-    It works by running the async iterator in a background thread's event
-    loop and passing items to the main thread through a thread-safe queue.
+    This implementation is thread-safe and is designed to be used from a
+    separate thread than the one running the asyncio event loop.
     """
 
     def __init__(
@@ -22,34 +21,23 @@ class AsyncToSyncIterator:
     ):
         self._async_iterator = async_iterator
         self._loop = loop
-        self._queue: queue.Queue = queue.Queue(maxsize=1)
-        self._feeder_task = self._loop.create_task(self._feeder())
-
-    async def _feeder(self):
-        """
-        Asynchronously consumes items from the async iterator and puts them
-        in the queue.
-        """
-        try:
-            async for item in self._async_iterator:
-                self._queue.put(item)
-        except Exception as e:
-            self._queue.put(e)
-        finally:
-            self._queue.put(SENTINEL)
 
     def __iter__(self):
         return self
 
     def __next__(self):
-        item = self._queue.get()
-        if item is SENTINEL:
+        """
+        Fetches the next item from the async iterator. This is a blocking call.
+        It submits the `__anext__` call to the event loop and waits for the result.
+        """
+        future = asyncio.run_coroutine_threadsafe(
+            self._async_iterator.__anext__(), self._loop
+        )
+        try:
+            return future.result()
+        except StopAsyncIteration:
+            # Re-raise as a standard StopIteration for the sync context
             raise StopIteration
-        if isinstance(item, Exception):
-            # We re-raise the exception in the main thread to ensure
-            # proper error propagation.
-            raise item
-        return item
 
 
 def ensure_iterable(obj: Any) -> Iterable[Any]:

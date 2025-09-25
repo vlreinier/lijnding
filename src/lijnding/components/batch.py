@@ -33,7 +33,7 @@ def batch(size: int = 10, timeout: float = 0) -> Stage:
     # If a timeout is specified, we return an async stage.
     if timeout > 0:
 
-        @generator_stage(name=f"batch(size={size}, timeout={timeout})")
+        @generator_stage(name=f"batch(size={size}, timeout={timeout})", backend="async")
         async def _batch_async(
             iterable: AsyncIterator[Any],
         ) -> AsyncIterator[List[Any]]:
