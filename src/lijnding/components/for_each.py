@@ -44,7 +44,7 @@ def for_each(
 
     if is_async:
 
-        @stage(name="ForEach", stage_type="itemwise", backend="async")
+        @stage(name="ForEach", stage_type="itemwise")
         async def _for_each_func_async(
             context: Context, item: Any
         ) -> AsyncIterator[Any]:

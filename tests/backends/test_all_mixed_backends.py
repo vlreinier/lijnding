@@ -13,7 +13,7 @@ from lijnding.core.context import Context
 
 # --- Test Stages ---
 
-@stage(backend="serial")
+@stage
 def add_one_sync(item: int) -> int:
     """A simple synchronous stage."""
     return item + 1
@@ -38,7 +38,7 @@ def add_thousand_sync_process(item: int) -> int:
         _ = i * i
     return item + 1000
 
-@stage(backend="serial")
+@stage
 def context_inc_sync(context: Context, item: int) -> int:
     """Increments a counter in the context."""
     context.inc("counter")

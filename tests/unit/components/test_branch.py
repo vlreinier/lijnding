@@ -52,12 +52,12 @@ def test_branch_with_uneven_outputs():
     assert results_zip_longest == [("a", "a!"), ("a", None)]
 
 
-@stage(backend="async")
+@stage
 async def to_upper_async(x: str) -> str:
     return x.upper()
 
 
-@stage(backend="async")
+@stage
 async def exclaim_async(x: str) -> str:
     return f"{x}!"
 
@@ -71,7 +71,7 @@ async def test_branch_zip_async():
 
 @pytest.mark.asyncio
 async def test_branch_with_uneven_outputs_async():
-    @stage(backend="async")
+    @stage
     async def multi_yield_async(x):
         yield x
         yield x

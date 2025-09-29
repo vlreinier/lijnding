@@ -8,7 +8,9 @@ Lijnding is built around a few core concepts that work together to create powerf
 
 - **Component**: A pre-built, configurable stage, usually created by a factory function (e.g., `branch()`, `batch()`). Components handle common tasks like branching, batching, and reducing.
 
-- **Backend**: The execution engine for a stage. LijnDing supports different backends (`serial`, `thread`) for different needs. This is configured via the `@stage` decorator (e.g., `@stage(backend="thread")`).
+- **Backend**: The execution engine for a stage. The framework automatically infers the backend from your function's signature: `async` for `async def` functions and `serial` for regular `def` functions. You only need to specify the `backend` for concurrency:
+  - `@stage(backend="thread")` for I/O-bound tasks.
+  - `@stage(backend="process")` for CPU-bound tasks.
 
 ## Key Features
 

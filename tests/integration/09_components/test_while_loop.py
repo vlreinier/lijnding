@@ -80,7 +80,7 @@ def test_while_loop_raises_error_on_multiple_items():
 async def test_async_while_loop():
     """Tests a basic while loop in an async pipeline."""
 
-    @stage(backend="async")
+    @stage
     async def increment_async(x):
         return x + 1
 
@@ -117,7 +117,7 @@ async def test_async_while_loop_with_sync_body():
 async def test_async_while_loop_raises_error():
     """Tests that the async loop raises an error if the body produces more than one item."""
 
-    @stage(backend="async")
+    @stage
     async def duplicate_async(x):
         yield x
         yield x

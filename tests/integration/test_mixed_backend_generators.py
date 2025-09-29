@@ -5,7 +5,7 @@ from lijnding.components.batch import batch
 from ..helpers.test_runner import run_pipeline
 
 
-@stage(backend="async")
+@stage
 async def async_identity(x: int) -> int:
     """A simple async stage that passes data through."""
     await asyncio.sleep(0.01)

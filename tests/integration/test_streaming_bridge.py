@@ -10,7 +10,7 @@ async def async_producer_with_delay(items):
         yield item
 
 
-@stage(backend="serial")
+@stage
 def sync_consumer_with_delay(item):
     time.sleep(0.1)
     return item

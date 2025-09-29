@@ -40,7 +40,7 @@ def retry(
 
     if is_async:
 
-        @stage(name=f"Retry(retries={retries})", stage_type="itemwise", backend="async")
+        @stage(name=f"Retry(retries={retries})", stage_type="itemwise")
         async def _retry_func_async(context: Context, item: Any) -> AsyncIterator[Any]:
             last_exception = None
             # The loop runs `retries + 1` times (e.g., 1 initial attempt + 3 retries).

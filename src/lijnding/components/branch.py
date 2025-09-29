@@ -121,7 +121,6 @@ def branch(*branches: Union[Stage, "Pipeline"], merge: str = "concat") -> Stage:
         @stage(
             name=f"Branch(merge='{merge}')",
             stage_type="itemwise",
-            backend="async",
             branch_pipelines=branch_pipelines,
         )
         async def _branch_func_async(

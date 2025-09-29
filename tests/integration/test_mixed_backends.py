@@ -11,7 +11,7 @@ def slow_io_stage(x: int) -> int:
     return x * 2
 
 
-@stage(backend="serial")
+@stage
 def fast_cpu_stage(x: int) -> int:
     """A fast, simple transformation."""
     return x + 1

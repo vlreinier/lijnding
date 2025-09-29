@@ -60,7 +60,7 @@ def test_for_each_with_pipeline_body():
 # --- Asynchronous Tests ---
 
 
-@stage(backend="async")
+@stage
 async def double_async(x):
     return x * 2
 

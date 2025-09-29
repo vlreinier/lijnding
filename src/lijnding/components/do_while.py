@@ -44,7 +44,7 @@ def do_while(condition: Callable[[Any], bool], body: Union[Stage, Pipeline]) -> 
 
     if is_async_body:
 
-        @stage(name="DoWhile", stage_type="itemwise", backend="async")
+        @stage(name="DoWhile", stage_type="itemwise")
         async def _do_while_func_async(
             context: Context, item: Any
         ) -> AsyncIterator[Any]:

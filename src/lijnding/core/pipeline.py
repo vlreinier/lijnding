@@ -345,7 +345,6 @@ class Pipeline:
             @stage(
                 name=pipeline_name,
                 stage_type="itemwise",
-                backend="async",
                 wrapped_pipeline=self,
             )
             async def _pipeline_as_stage_func_async(

@@ -75,7 +75,7 @@ async def test_async_retry_succeeds_after_failures():
     """Tests that the async retry component succeeds after failures."""
     fail_counter = FailCounter(fail_times=2)
 
-    @stage(backend="async")
+    @stage
     async def failing_stage_async(x):
         return fail_counter.call(x)
 

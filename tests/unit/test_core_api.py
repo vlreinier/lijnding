@@ -24,7 +24,7 @@ def context_incrementer(context: Context, x: int) -> int:
     return x
 
 
-@stage(backend="async")
+@stage
 async def add_one_async(x: int) -> int:
     await asyncio.sleep(0.001)
     return x + 1

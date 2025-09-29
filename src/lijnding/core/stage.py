@@ -263,7 +263,7 @@ def stage(
     *,
     name: Optional[str] = None,
     stage_type: str = "itemwise",
-    backend: str = "serial",
+    backend: Optional[str] = None,
     workers: int = 1,
     buffer_size: Optional[int] = None,
     input_type: Optional[Type[Any]] = None,
@@ -295,8 +295,9 @@ def stage(
             name is used.
         stage_type: The type of stage. Can be 'itemwise', 'aggregator', or
             'source'. Defaults to 'itemwise'.
-        backend: The execution backend to use for this stage.
-            Defaults to 'serial'.
+        backend: The execution backend ('thread', 'process'). If not provided,
+            it's inferred from the function signature ('async' for async functions,
+            'serial' for regular functions).
         workers: The number of parallel workers for concurrent backends
             ('thread', 'process'). Defaults to 1.
         buffer_size: The maximum number of items to buffer for concurrent
@@ -314,11 +315,18 @@ def stage(
     """
 
     def wrapper(func: Callable[..., Any]) -> Stage:
+        final_backend = backend
+        if final_backend is None:
+            is_async = inspect.iscoroutinefunction(
+                func
+            ) or inspect.isasyncgenfunction(func)
+            final_backend = "async" if is_async else "serial"
+
         return Stage(
             typechecked(func),
             name=name,
             stage_type=stage_type,
-            backend=backend,
+            backend=final_backend,
             workers=workers,
             buffer_size=buffer_size,
             input_type=input_type,
@@ -340,7 +348,7 @@ def aggregator_stage(
     _func: Optional[Callable[..., Any]] = None,
     *,
     name: Optional[str] = None,
-    backend: str = "serial",
+    backend: Optional[str] = None,
     workers: int = 1,
     buffer_size: Optional[int] = None,
     input_type: Optional[Type[Any]] = None,
@@ -390,7 +398,7 @@ def generator_stage(
     _func: Optional[Callable[..., Any]] = None,
     *,
     name: Optional[str] = None,
-    backend: str = "serial",
+    backend: Optional[str] = None,
     workers: int = 1,
     buffer_size: Optional[int] = None,
     input_type: Optional[Type[Any]] = None,

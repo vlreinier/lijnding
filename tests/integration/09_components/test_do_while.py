@@ -42,7 +42,7 @@ def test_do_while_loop_runs_once():
 async def test_async_do_while_loop():
     """Tests a basic do-while loop in an async pipeline."""
 
-    @stage(backend="async")
+    @stage
     async def increment_async(x):
         return x + 1
 
@@ -57,7 +57,7 @@ async def test_async_do_while_loop():
 async def test_async_do_while_runs_once():
     """Tests that the async do-while loop runs once if the condition is false."""
 
-    @stage(backend="async")
+    @stage
     async def increment_async(x):
         return x + 1
 

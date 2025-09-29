@@ -50,7 +50,7 @@ def if_else(
 
     if is_async:
 
-        @stage(name="IfElse", stage_type="itemwise", backend="async")
+        @stage(name="IfElse", stage_type="itemwise")
         async def _if_else_func_async(
             context: Context, item: Any
         ) -> AsyncIterator[Any]:

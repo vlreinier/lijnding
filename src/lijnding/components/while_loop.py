@@ -43,7 +43,7 @@ def while_loop(condition: Callable[[Any], bool], body: Union[Stage, Pipeline]) -
 
     if is_async_body:
 
-        @stage(name="While", stage_type="itemwise", backend="async")
+        @stage(name="While", stage_type="itemwise")
         async def _while_func_async(context: Context, item: Any) -> AsyncIterator[Any]:
             current_item = item
             # The loop first checks the condition, then executes the body.

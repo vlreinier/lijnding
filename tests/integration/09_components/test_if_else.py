@@ -56,12 +56,12 @@ def test_if_else_with_multiple_items():
 # --- Asynchronous Tests ---
 
 
-@stage(backend="async")
+@stage
 async def double_async(x):
     return x * 2
 
 
-@stage(backend="async")
+@stage
 async def increment_async(x):
     return x + 1
 
