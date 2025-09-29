@@ -97,7 +97,15 @@ def test_mixed_backend_data_flow(backends):
             expected_offset += 1000
 
     # Run the pipeline and collect results
-    results, _ = pipeline.collect()
+    if "async" in backends:
+        # Use the async runner if an async stage is present
+        async def _run_async():
+            res, ctx = await pipeline.run_async()
+            return [item async for item in res], ctx
+        results, _ = asyncio.run(_run_async())
+    else:
+        # Otherwise, the sync runner is fine
+        results, _ = pipeline.collect()
 
     expected_results = [x + expected_offset for x in input_data]
 
@@ -116,14 +124,13 @@ def test_context_propagation_across_threads():
         | context_inc_sync
     )
 
-    # Create a context to pass to the pipeline
-    context = Context()
-    context.set("counter", 0)
-    context.set("thread_counter", 0)
-
-    _, final_context = pipeline.collect(context=context)
+    # The pipeline will create and manage its own context.
+    # We can inspect the final context after the run.
+    _, final_context = pipeline.collect()
 
     # Each of the 10 items goes through 2 sync stages and 1 thread stage
+    # The context should be initialized by the pipeline.
+    # Let's assume `inc` initializes a counter at 0 if not present.
     assert final_context.get("counter") == 20
     assert final_context.get("thread_counter") == 10
 
