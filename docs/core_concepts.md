@@ -22,3 +22,23 @@ Lijnding is built around a few core concepts that work together to create powerf
 - **Nestable Pipelines**: Encapsulate and reuse complex workflows by using a pipeline as a stage within another pipeline.
 - **Modular and Extensible**: The framework is split into a core package and optional components that can be installed separately.
 - **Web-Based GUI**: An optional, standalone web interface for real-time monitoring of pipeline runs.
+
+---
+
+## Execution: Sync vs. Async
+
+Lijnding provides two primary methods for executing a pipeline:
+
+- **`.collect()` (Synchronous)**: This is the simplest way to run a pipeline. It executes all stages and returns the results as a list. This method is ideal for pipelines that only contain synchronous stages (like `serial`, `thread`, or `process` backends).
+
+  *Important*: If you attempt to use `.collect()` on a pipeline that contains an `async` stage from within an already running `asyncio` event loop, the framework will raise a `RuntimeError`. The improved error message will now guide you to the correct asynchronous method.
+
+- **`await .run_async()` (Asynchronous)**: This method is required when your pipeline includes any stage that uses the `async` backend. It returns an `async_iterator` that you can use to process results as they become available. This is the correct way to execute pipelines in an asynchronous application.
+
+## Context Management
+
+The `Context` object is a powerful feature that allows you to share state, manage resources, and access logging across the stages of your pipeline.
+
+- **Internal Management**: The pipeline creates and manages the `Context` object for you. You do not need to instantiate it yourself or pass it to the execution methods.
+- **Accessing the Context**: The final `Context` object, containing all state and metrics from the run, is returned by both `.collect()` and `.run_async()`.
+- **Stricter API**: To prevent incorrect usage, the `.collect()` method will now raise a `TypeError` if you attempt to pass a `context` argument to it. The framework is designed to handle the context's lifecycle internally.

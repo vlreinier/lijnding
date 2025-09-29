@@ -181,7 +181,14 @@ class Pipeline:
 
                     try:
                         loop = asyncio.get_running_loop()
+                        if loop.is_running():
+                            raise RuntimeError(
+                                "Pipeline contains an async stage and cannot be run synchronously "
+                                "from an already-running event loop with .collect(). "
+                                "Please use 'await pipeline.run_async()' instead."
+                            )
                     except RuntimeError:
+                        # No running loop, so we can create one to run the collection.
                         loop = asyncio.new_event_loop()
                         asyncio.set_event_loop(loop)
 
@@ -195,7 +202,10 @@ class Pipeline:
             self.logger.info(f"Pipeline run finished in {total_time:.4f} seconds.")
 
     def collect(
-        self, data: Optional[Iterable[Any]] = None, config_path: Optional[str] = None
+        self,
+        data: Optional[Iterable[Any]] = None,
+        config_path: Optional[str] = None,
+        **kwargs: Any,
     ) -> Tuple[List[Any], Context]:
         """A convenience method that runs the pipeline and collects all results into a list.
 
@@ -207,6 +217,12 @@ class Pipeline:
             A tuple containing a list of the pipeline's output and the final
             `Context` object.
         """
+        if "context" in kwargs:
+            raise TypeError(
+                "The .collect() method does not accept a 'context' argument. "
+                "The pipeline manages the context internally. Please inspect "
+                "the context object returned by .collect() instead."
+            )
         stream, context = self.run(data, collect=True, config_path=config_path)
         return stream, context  # type: ignore
 
