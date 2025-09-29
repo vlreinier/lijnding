@@ -89,9 +89,8 @@ def save_progress(
     Returns:
         A new `Stage` that saves progress and passes items through.
     """
-    from ..core.stage import generator_stage
 
-    @generator_stage(name=name, **stage_kwargs)
+    @stage(name=name, stage_type="generator", **stage_kwargs)
     def _save_progress_stage(items: Iterable[Any]) -> Generator[Any, None, None]:
         with open(filepath, "a", encoding="utf-8") as f:
             for item in items:

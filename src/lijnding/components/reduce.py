@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Any, Callable, Iterable, Optional, Generator
 import functools
 
-from ..core.stage import Stage, generator_stage
+from ..core.stage import Stage, stage
 
 
 def reduce_(
@@ -29,7 +29,7 @@ def reduce_(
         A Stage configured to perform the reduction.
     """
 
-    @generator_stage(name="reduce")
+    @stage(name="reduce", stage_type="generator")
     def _reduce_func(iterable: Iterable[Any]) -> Generator[Any, None, None]:
         iterator = iter(iterable)
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any, Iterable, List, AsyncIterator
 
-from ..core.stage import Stage, generator_stage
+from ..core.stage import Stage, stage
 
 
 def batch(size: int = 10, timeout: float = 0) -> Stage:
@@ -33,7 +33,7 @@ def batch(size: int = 10, timeout: float = 0) -> Stage:
     # If a timeout is specified, we return an async stage.
     if timeout > 0:
 
-        @generator_stage(name=f"batch(size={size}, timeout={timeout})")
+        @stage(name=f"batch(size={size}, timeout={timeout})", stage_type="generator")
         async def _batch_async(
             iterable: AsyncIterator[Any],
         ) -> AsyncIterator[List[Any]]:
@@ -92,7 +92,7 @@ def batch(size: int = 10, timeout: float = 0) -> Stage:
     # If no timeout, we return a synchronous stage.
     else:
 
-        @generator_stage(name=f"batch(size={size})")
+        @stage(name=f"batch(size={size})", stage_type="generator")
         def _batch_sync(iterable: Iterable[Any]) -> Iterable[List[Any]]:
             current_batch: List[Any] = []
             for item in iterable:

@@ -104,37 +104,70 @@ results_concat, _ = concat_pipeline.collect(data)
 # results_concat is: ['HELLO', 5, 'olleh', 'WORLD', 5, 'dlrow']
 ```
 
-### Aggregators
+### Streaming Generators vs. Aggregators
 
-In a standard pipeline, stages process items one by one. However, some operations need to work on the entire stream of items at once. These are called **aggregator stages**.
+LijnDing supports two different patterns for stages that handle multiple items: streaming and aggregating. Understanding the difference is key to building efficient pipelines.
 
-There are two main ways to use aggregators:
+#### 1. Streaming with Generators (`@stage`)
 
-1.  **Built-in Components**: The framework provides several pre-built aggregator components, such as `batch`, which groups items into lists, and `reduce`, which combines all items into a single result.
+For most stateful operations like batching, windowing, or running averages, you should use a standard `@stage` with a **generator function** (a function that uses `yield`). This is a *streaming* approach that is highly memory-efficient, as it processes items as they come without loading the entire dataset into memory.
 
-2.  **The `@aggregator_stage` Decorator**: For custom logic, you can create your own aggregator stage by decorating a function with `@aggregator_stage`. This decorator modifies your function so that instead of receiving items one by one, it receives a single argument: an `Iterable` containing all items from the previous stage.
+**Use this pattern when you can produce output incrementally.**
 
-Here is an example that uses both a built-in aggregator (`batch`) and a custom one (`process_batches`):
+Here is an example of a `batch` component implemented as a streaming generator:
 
 ```python
-from lijnding.core import stage, aggregator_stage
-from lijnding.components import batch, reduce
+from lijnding.core import stage
+from typing import Iterable, List, Any
+
+@stage
+def batch(items: Iterable[Any], size: int = 10) -> Iterable[List[Any]]:
+    """A streaming stage that groups items into batches."""
+    batch = []
+    for item in items:
+        batch.append(item)
+        if len(batch) >= size:
+            yield batch
+            batch = []
+    if batch:
+        yield batch
 
 @stage
 def generate_numbers():
     yield from range(10)
 
-# `process_batches` is a custom aggregator that calculates the sum of each batch
+# The pipeline generates numbers and batches them in a streaming fashion.
+# The `batch` stage only holds `size` items in memory at a time.
+pipeline = generate_numbers | batch(size=4)
+
+results, _ = pipeline.collect([])
+# results is: [[0, 1, 2, 3], [4, 5, 6, 7], [8, 9]]
+```
+
+#### 2. Aggregating with `@aggregator_stage`
+
+Some operations, like `sort` or `sum`, fundamentally require the **entire dataset** before they can produce a result. For these, LijnDing provides the `@aggregator_stage` decorator.
+
+This decorator signals that the function will receive a single argument: an `Iterable` containing all items from the previous stage.
+
+**Warning**: Use this decorator sparingly. Aggregator stages must load the entire input stream into memory, which can be a performance bottleneck for large datasets.
+
+Here is an example that sums all numbers in the stream:
+
+```python
+from lijnding.core import stage, aggregator_stage
+from typing import Iterable
+
+@stage
+def generate_numbers():
+    yield from range(10)
+
 @aggregator_stage
-def process_batches(batches):
-    for batch_list in batches:
-        yield sum(batch_list)
+def sum_all(numbers: Iterable[int]) -> int:
+    """An aggregator stage that consumes the whole stream to sum it."""
+    return sum(numbers)
 
-# `reduce` is a built-in aggregator that sums the results from the previous stage
-reduce_stage = reduce(lambda a, b: a + b, initializer=0)
-
-# The pipeline generates numbers, batches them, sums each batch, and then sums the sums.
-pipeline = generate_numbers | batch(size=4) | process_batches | reduce_stage
+pipeline = generate_numbers | sum_all
 
 results, _ = pipeline.collect([])
 # results is: [45]
