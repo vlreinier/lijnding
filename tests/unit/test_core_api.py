@@ -105,10 +105,9 @@ def test_stage_direct_execution():
 
 @pytest.mark.asyncio
 async def test_stage_direct_async_execution():
-    """Tests that a single async stage can be executed directly using .run_async()."""
+    """Tests that a single async stage can be executed directly using .acollect()."""
     data = [1, 2, 3]
-    stream, context = await add_one_async.run_async(data)
-    results = [item async for item in stream]
+    results, context = await add_one_async.acollect(data)
     assert results == [2, 3, 4]
     assert isinstance(context, Context)
 

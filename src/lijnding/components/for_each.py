@@ -53,7 +53,7 @@ def for_each(
             all_results = []
             # For each element, run the sub-pipeline and collect the results.
             for element in elements:
-                stream, _ = await sub_pipeline.run_async(data=[element])
+                stream, _ = await sub_pipeline.arun(data=[element])
                 results: List[Any] = [res async for res in stream]
                 all_results.extend(results)
             # Yield a single list containing all the results.

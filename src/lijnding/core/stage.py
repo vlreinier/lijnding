@@ -186,7 +186,7 @@ class Stage:
         pipeline = Pipeline([self])
         return pipeline.collect(data, config_path=config_path)
 
-    async def run_async(
+    async def arun(
         self,
         data: Optional[Union[Iterable[Any], AsyncIterable[Any]]] = None,
         config_path: Optional[str] = None,
@@ -203,7 +203,26 @@ class Stage:
         from .pipeline import Pipeline
 
         pipeline = Pipeline([self])
-        return await pipeline.run_async(data, config_path=config_path)
+        return await pipeline.arun(data, config_path=config_path)
+
+    async def acollect(
+        self,
+        data: Optional[Union[Iterable[Any], AsyncIterable[Any]]] = None,
+        config_path: Optional[str] = None,
+    ) -> Tuple[List[Any], Context]:
+        """Asynchronously executes the stage and collects all results into a list.
+
+        Args:
+            data: An iterable or async iterable of data to process.
+            config_path: Path to a YAML configuration file.
+
+        Returns:
+            A tuple containing the list of results and the execution context.
+        """
+        from .pipeline import Pipeline
+
+        pipeline = Pipeline([self])
+        return await pipeline.acollect(data, config_path=config_path)
 
     def _invoke(self, context: Context, *args: Any, **kwargs: Any) -> Any:
         """Invokes the wrapped function, injecting context if required."""
@@ -226,7 +245,7 @@ class Stage:
         from .pipeline import Pipeline
 
         if hasattr(Pipeline, name):
-            if name in ("run", "run_async", "collect"):
+            if name in ("run", "arun", "collect", "acollect"):
                 raise AttributeError(f"'Stage' object has no attribute '{name}'")
 
             message = (

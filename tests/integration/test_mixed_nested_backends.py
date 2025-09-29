@@ -64,12 +64,7 @@ def test_nested_mixed_backend_pipeline(backend_outer, backend_inner):
     input_data = list(range(10))
 
     if backend_outer == "async" or backend_inner == "async":
-
-        async def run_test():
-            output_data, _ = await outer_pipeline.run_async(input_data)
-            return [i async for i in output_data]
-
-        output_data = asyncio.run(run_test())
+        output_data, _ = asyncio.run(outer_pipeline.acollect(input_data))
     else:
         output_data, _ = outer_pipeline.collect(input_data)
 

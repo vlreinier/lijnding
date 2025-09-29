@@ -82,7 +82,7 @@ class ThreadingRunner(BaseRunner):
                                 import asyncio
                                 import inspect
 
-                                async def run_async_stage():
+                                async def arun_stage():
                                     result_obj = stage._invoke(worker_context, item)
                                     count_out = 0
                                     if inspect.isasyncgen(result_obj):
@@ -102,7 +102,7 @@ class ThreadingRunner(BaseRunner):
                                 asyncio.set_event_loop(loop)
                                 try:
                                     count_out = loop.run_until_complete(
-                                        run_async_stage()
+                                        arun_stage()
                                     )
                                 finally:
                                     loop.close()

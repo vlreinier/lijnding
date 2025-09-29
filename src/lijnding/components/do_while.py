@@ -51,7 +51,7 @@ def do_while(condition: Callable[[Any], bool], body: Union[Stage, Pipeline]) -> 
             current_item = item
             # The loop executes the body and then checks the condition.
             while True:
-                stream, _ = await body_pipeline.run_async(data=[current_item])
+                stream, _ = await body_pipeline.arun(data=[current_item])
                 results: List[Any] = [res async for res in stream]
 
                 # The body must produce a single output item to be used in the

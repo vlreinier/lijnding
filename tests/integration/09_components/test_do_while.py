@@ -48,8 +48,7 @@ async def test_async_do_while_loop():
 
     # Loop while x < 5
     pipeline = do_while(lambda x: x < 5, increment_async)
-    stream, _ = await pipeline.run_async([0])
-    result = [item async for item in stream]
+    result, _ = await pipeline.acollect([0])
 
     assert result == [5]
 
@@ -64,7 +63,6 @@ async def test_async_do_while_runs_once():
 
     # The condition `x < 0` will be false after the first iteration (0 -> 1)
     pipeline = do_while(lambda x: x < 0, increment_async)
-    stream, _ = await pipeline.run_async([0])
-    result = [item async for item in stream]
+    result, _ = await pipeline.acollect([0])
 
     assert result == [1]

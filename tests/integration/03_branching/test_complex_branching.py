@@ -31,11 +31,7 @@ def test_branch_with_nested_pipeline(backend):
     if backend == "async":
         import asyncio
 
-        async def run_test():
-            output_data, _ = await pipeline.run_async(data)
-            return [i async for i in output_data]
-
-        results = asyncio.run(run_test())
+        results, _ = asyncio.run(pipeline.acollect(data))
     else:
         results, _ = pipeline.collect(data)
 

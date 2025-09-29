@@ -116,8 +116,7 @@ async def test_async_route_to_pipeline():
 
     pipeline = failing_stage | stage(to_string, backend="async")
 
-    stream, _ = await pipeline.run_async([123, 456])
-    result = [item async for item in stream]
+    result, _ = await pipeline.acollect([123, 456])
 
     assert dead_letter_results == [123]
     assert result == ["456"]

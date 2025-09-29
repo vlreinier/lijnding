@@ -23,7 +23,7 @@ class AsyncioRunner(BaseRunner):
 
     # This runner has a different signature for its entry point to support `async`.
     # The Pipeline will need to be aware of this.
-    async def run_async(
+    async def arun(
         self, stage: "Stage", context: "Context", iterable: AsyncIterator[Any]
     ) -> AsyncIterator[Any]:
         """Asynchronously executes the stage with structured logging."""
@@ -81,7 +81,7 @@ class AsyncioRunner(BaseRunner):
                 def run_sync_gen_in_thread():
                     # This will run the generator to completion and buffer
                     # results, which is not ideal for memory but consistent
-                    # with how other sync stages are handled in `run_async`.
+                    # with how other sync stages are handled in `arun`.
                     return list(stage._invoke(context, sync_iterable))
 
                 results = await loop.run_in_executor(
@@ -195,7 +195,7 @@ class AsyncioRunner(BaseRunner):
         .. warning::
             This method is NOT lazy and will block until the entire async
             iterator is consumed. It also cannot be called from a running
-            event loop. Use `run_async` for true async behavior.
+            event loop. Use `arun` for true async behavior.
         """
 
         # We need an async generator to pass to `asyncio.run`.
@@ -205,7 +205,7 @@ class AsyncioRunner(BaseRunner):
                 for i in it:
                     yield i
 
-            async for res in self.run_async(stage, context, _to_async(iterable)):
+            async for res in self.arun(stage, context, _to_async(iterable)):
                 yield res
 
         # This is a bridge from the async world to the sync world.
@@ -223,7 +223,7 @@ class AsyncioRunner(BaseRunner):
             # This is a complex problem. For now, we'll raise an error.
             raise RuntimeError(
                 "Cannot run the asyncio backend from a running event loop with the sync `run` method. "
-                "You must use `run_async` instead."
+                "You must use `arun` instead."
             )
 
         # This will block until the entire async generator is consumed.

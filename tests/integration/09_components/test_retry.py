@@ -81,8 +81,7 @@ async def test_async_retry_succeeds_after_failures():
 
     pipeline = retry(failing_stage_async, retries=3, backoff=0.01)
 
-    stream, _ = await pipeline.run_async([10])
-    result = [item async for item in stream]
+    result, _ = await pipeline.acollect([10])
 
     assert result == [20]
     assert fail_counter.attempts == 3

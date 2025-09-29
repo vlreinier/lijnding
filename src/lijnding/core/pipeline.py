@@ -185,7 +185,7 @@ class Pipeline:
                             raise RuntimeError(
                                 "Pipeline contains an async stage and cannot be run synchronously "
                                 "from an already-running event loop with .collect(). "
-                                "Please use 'await pipeline.run_async()' instead."
+                                "Please use 'await pipeline.arun()' or 'await pipeline.acollect()' instead."
                             )
                     except RuntimeError:
                         # No running loop, so we can create one to run the collection.
@@ -226,7 +226,7 @@ class Pipeline:
         stream, context = self.run(data, collect=True, config_path=config_path)
         return stream, context  # type: ignore
 
-    async def run_async(
+    async def arun(
         self,
         data: Optional[Union[Iterable[Any], AsyncIterable[Any]]] = None,
         config_path: Optional[str] = None,
@@ -252,7 +252,7 @@ class Pipeline:
         if data is None:
             if not self.stages or self.stages[0].stage_type != "source":
                 raise TypeError(
-                    "Pipeline.run_async() requires a data argument unless the first stage is a source stage."
+                    "Pipeline.arun() requires a data argument unless the first stage is a source stage."
                 )
             data = []
 
@@ -269,8 +269,8 @@ class Pipeline:
         try:
             for stage_obj in self.stages:
                 runner = get_runner(getattr(stage_obj, "backend", "serial"))
-                if hasattr(runner, "run_async"):
-                    stream = runner.run_async(stage_obj, context, stream)
+                if hasattr(runner, "arun"):
+                    stream = runner.arun(stage_obj, context, stream)
                 else:
                     loop = asyncio.get_running_loop()
                     sync_iterable = AsyncToSyncIterator(stream, loop)
@@ -299,6 +299,28 @@ class Pipeline:
             self.logger.info(
                 f"Async pipeline run finished in {total_time:.4f} seconds."
             )
+
+    async def acollect(
+        self,
+        data: Optional[Union[Iterable[Any], AsyncIterable[Any]]] = None,
+        config_path: Optional[str] = None,
+    ) -> Tuple[List[Any], Context]:
+        """Asynchronously runs the pipeline and collects all results into a list.
+
+        This is the asynchronous equivalent of the `.collect()` method and should
+        be used when the pipeline contains an `async` stage.
+
+        Args:
+            data: An iterable or async iterable of input data.
+            config_path: The path to a YAML configuration file.
+
+        Returns:
+            A tuple containing a list of the pipeline's output and the final
+            `Context` object.
+        """
+        stream, context = await self.arun(data, config_path=config_path)
+        results = [item async for item in stream]
+        return results, context
 
     @property
     def metrics(self) -> dict[str, Any]:
@@ -329,7 +351,7 @@ class Pipeline:
             async def _pipeline_as_stage_func_async(
                 context: Context, item: Any
             ) -> AsyncIterator[Any]:
-                stream, _ = await self.run_async(data=[item])
+                stream, _ = await self.arun(data=[item])
                 async for inner_item in stream:
                     yield inner_item
 

@@ -30,7 +30,7 @@ async def test_async_to_sync_generator_pipeline():
     data = [1, 2, 3, 4, 5]
 
     # The `run_pipeline` helper runs the pipeline and collects the results.
-    # It will use the `run_async` method because the pipeline contains an
+    # It will use the `acollect` method because the pipeline contains an
     # async stage.
     results, _ = await run_pipeline(pipeline, data)
 

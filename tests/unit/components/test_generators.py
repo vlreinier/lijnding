@@ -28,8 +28,7 @@ async def test_batch_component_async_timeout():
         await asyncio.sleep(0.2)
         yield 3
 
-    stream, _ = await pipeline.run_async(data_stream())
-    final_results = [item async for item in stream]
+    final_results, _ = await pipeline.acollect(data_stream())
 
     assert final_results == [[1, 2], [3]]
 
@@ -44,8 +43,7 @@ async def test_batch_full_before_timeout():
         yield 2
         yield 3
 
-    stream, _ = await pipeline.run_async(data_stream())
-    final_results = [item async for item in stream]
+    final_results, _ = await pipeline.acollect(data_stream())
 
     assert final_results == [[1, 2], [3]]
 

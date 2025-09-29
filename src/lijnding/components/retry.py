@@ -46,7 +46,7 @@ def retry(
             # The loop runs `retries + 1` times (e.g., 1 initial attempt + 3 retries).
             for attempt in range(retries + 1):
                 try:
-                    stream, _ = await sub_pipeline.run_async(data=[item])
+                    stream, _ = await sub_pipeline.arun(data=[item])
                     results: List[Any] = [res async for res in stream]
                     for res in results:
                         yield res

@@ -56,9 +56,9 @@ def if_else(
         ) -> AsyncIterator[Any]:
             # Route the item to the appropriate pipeline based on the condition.
             if condition(item):
-                stream, _ = await if_true_pipeline.run_async(data=[item])
+                stream, _ = await if_true_pipeline.arun(data=[item])
             else:
-                stream, _ = await if_false_pipeline.run_async(data=[item])
+                stream, _ = await if_false_pipeline.arun(data=[item])
 
             # Yield the results from the chosen pipeline.
             async for res in stream:

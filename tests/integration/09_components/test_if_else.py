@@ -71,8 +71,7 @@ async def test_async_if_else_true_branch():
     """Tests the async 'if_true' branch."""
     pipeline = if_else(is_even, if_true=double_async, if_false=increment_async)
 
-    stream, _ = await pipeline.run_async([4])
-    result = [item async for item in stream]
+    result, _ = await pipeline.acollect([4])
     assert result == [8]
 
 
@@ -81,6 +80,5 @@ async def test_async_if_else_false_branch():
     """Tests the async 'if_false' branch."""
     pipeline = if_else(is_even, if_true=double_async, if_false=increment_async)
 
-    stream, _ = await pipeline.run_async([5])
-    result = [item async for item in stream]
+    result, _ = await pipeline.acollect([5])
     assert result == [6]

@@ -182,7 +182,7 @@ async def _handle_route_to_pipeline_async(
         pipeline = Pipeline([pipeline])
 
     # Run the pipeline and consume the async stream to ensure it executes.
-    stream, _ = await pipeline.run_async([item])
+    stream, _ = await pipeline.arun([item])
     async for _ in stream:
         pass
 
@@ -204,7 +204,7 @@ async def _handle_transform_and_retry_async(
     if isinstance(pipeline, Stage):
         pipeline = Pipeline([pipeline])
 
-    stream, _ = await pipeline.run_async([item])
+    stream, _ = await pipeline.arun([item])
     results = [res async for res in stream]
     if len(results) != 1:
         raise ValueError(

@@ -19,9 +19,8 @@ async def test_source_stage_no_args(backend):
 
     # For a source stage, we should be able to call run/collect with no arguments.
     if backend == "async":
-        # We must use run_async for async backends
-        stream, _ = await pipeline.run_async()
-        results = [item async for item in stream]
+        # We must use acollect for async backends
+        results, _ = await pipeline.acollect()
     else:
         results, _ = pipeline.collect()
 

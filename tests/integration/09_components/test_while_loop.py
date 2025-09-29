@@ -86,8 +86,7 @@ async def test_async_while_loop():
 
     # Loop while x < 5
     pipeline = while_loop(lambda x: x < 5, increment_async)
-    stream, _ = await pipeline.run_async([0])
-    result = [item async for item in stream]
+    result, _ = await pipeline.acollect([0])
 
     assert result == [5]
 
@@ -108,8 +107,7 @@ async def test_async_while_loop_with_sync_body():
 
     # Loop while x < 10
     pipeline = while_loop(lambda x: x < 10, body_pipeline)
-    stream, _ = await pipeline.run_async([0])
-    result = [item async for item in stream]
+    result, _ = await pipeline.acollect([0])
 
     # 0 -> 3 -> 6 -> 9 -> 12
     assert result == [12]
@@ -127,5 +125,4 @@ async def test_async_while_loop_raises_error():
     pipeline = while_loop(lambda x: x < 5, duplicate_async)
 
     with pytest.raises(ValueError, match="must produce exactly one item"):
-        stream, _ = await pipeline.run_async([0])
-        _ = [item async for item in stream]
+        await pipeline.acollect([0])

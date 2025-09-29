@@ -99,13 +99,10 @@ def test_mixed_backend_data_flow(backends):
     # Run the pipeline and collect results
     if "async" in backends:
         # Use the async runner if an async stage is present
-        async def _run_async():
-            res, ctx = await pipeline.run_async()
-            return [item async for item in res], ctx
-        results, _ = asyncio.run(_run_async())
+        results, _ = asyncio.run(pipeline.acollect(input_data))
     else:
         # Otherwise, the sync runner is fine
-        results, _ = pipeline.collect()
+        results, _ = pipeline.collect(input_data)
 
     expected_results = [x + expected_offset for x in input_data]
 

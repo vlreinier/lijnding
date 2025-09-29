@@ -130,7 +130,7 @@ def branch(*branches: Union[Stage, "Pipeline"], merge: str = "concat") -> Stage:
             # For each branch, run the pipeline with the single item and get its
             # async iterator result.
             branch_iterators = [
-                (await p.run_async([item]))[0] for p in branch_pipelines
+                (await p.arun([item]))[0] for p in branch_pipelines
             ]
 
             # Apply the selected merge strategy to the branch results.

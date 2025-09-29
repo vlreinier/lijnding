@@ -14,9 +14,7 @@ async def run_pipeline(
     """
     is_async_data = inspect.isasyncgen(data)
     if "async" in pipeline._get_required_backend_names() or is_async_data:
-        stream, context = await pipeline.run_async(data)
-        results = [item async for item in stream]
-        return results, context
+        return await pipeline.acollect(data)
     else:
         # This is a blocking call, but it's what's needed for sync backends.
         # The `pytest-asyncio` runner will handle running this in the event loop.

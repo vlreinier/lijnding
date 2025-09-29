@@ -65,8 +65,7 @@ async def exclaim_async(x: str) -> str:
 @pytest.mark.asyncio
 async def test_branch_zip_async():
     pipeline = stage(lambda x: x) | branch(to_upper_async, exclaim_async, merge="zip")
-    stream, _ = await pipeline.run_async(["a", "b"])
-    results = [item async for item in stream]
+    results, _ = await pipeline.acollect(["a", "b"])
     assert results == [("A", "a!"), ("B", "b!")]
 
 
@@ -80,14 +79,12 @@ async def test_branch_with_uneven_outputs_async():
     # Test with one sync and one async stage. The 'zip' strategy stops when
     # the shortest branch (`exclaim`, which yields 1 item) is exhausted.
     pipeline_zip = stage(lambda x: x) | branch(multi_yield_async, exclaim, merge="zip")
-    stream_zip, _ = await pipeline_zip.run_async(["a", "b"])
-    results_zip = [item async for item in stream_zip]
+    results_zip, _ = await pipeline_zip.acollect(["a", "b"])
     assert results_zip == [("a", "a!"), ("b", "b!")]
 
     # The 'zip_longest' strategy continues until the longest branch is exhausted.
     pipeline_zip_longest = stage(lambda x: x) | branch(
         multi_yield_async, exclaim, merge="zip_longest"
     )
-    stream_zip_longest, _ = await pipeline_zip_longest.run_async(["a"])
-    results_zip_longest = [item async for item in stream_zip_longest]
+    results_zip_longest, _ = await pipeline_zip_longest.acollect(["a"])
     assert results_zip_longest == [("a", "a!"), ("a", None)]

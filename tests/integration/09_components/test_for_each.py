@@ -71,7 +71,6 @@ async def test_async_for_each():
 
     pipeline = for_each(pipeline=double_async, selector=lambda x: x)
 
-    stream, _ = await pipeline.run_async([[1, 2, 3, 4]])
-    result = [item async for item in stream]
+    result, _ = await pipeline.acollect([[1, 2, 3, 4]])
 
     assert result == [[2, 4, 6, 8]]
