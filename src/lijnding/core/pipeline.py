@@ -20,13 +20,40 @@ from typing import (
 )
 import time
 import asyncio
+from functools import partial
 
 from ..backends.runner_registry import get_runner
 from .context import Context
 from .stage import Stage, stage
 from .log import get_logger
-from .utils import AsyncToSyncIterator
 from ..config import Config, load_config
+from ..connectors.async_bridge import AsyncBridge
+
+
+class ManagedAsyncIterator:
+    """
+    A wrapper around an async iterator that also manages the lifecycle of a
+    related background task (e.g., a producer task).
+    """
+    def __init__(self, iterator: AsyncIterator[Any], drain_task: asyncio.Task):
+        self._iterator = iterator
+        self._drain_task = drain_task
+
+    def __aiter__(self) -> AsyncIterator[Any]:
+        return self._iterator
+
+    async def aclose(self) -> None:
+        """
+        Closes the iterator and ensures the associated drain task is cancelled.
+        """
+        if hasattr(self._iterator, "aclose"):
+            await self._iterator.aclose()
+
+        self._drain_task.cancel()
+        try:
+            await self._drain_task
+        except asyncio.CancelledError:
+            pass # Cancellation is expected
 
 
 class Pipeline:
@@ -273,25 +300,24 @@ class Pipeline:
                     stream = runner.arun(stage_obj, context, stream)
                 else:
                     loop = asyncio.get_running_loop()
-                    sync_iterable = AsyncToSyncIterator(stream, loop)
+                    bridge = AsyncBridge(loop)
 
-                    def run_sync_stage_in_thread():
-                        if runner.should_run_in_own_loop():
-                            new_loop = asyncio.new_event_loop()
-                            asyncio.set_event_loop(new_loop)
-                            try:
-                                return list(
-                                    runner.run(stage_obj, context, sync_iterable)
-                                )
-                            finally:
-                                new_loop.close()
-                        else:
-                            return list(runner.run(stage_obj, context, sync_iterable))
+                    drain_task = loop.create_task(bridge.drain_to_sync(stream))
 
-                    sync_results = await loop.run_in_executor(
-                        None, run_sync_stage_in_thread
-                    )
-                    stream = _to_async(sync_results)
+                    sync_iterator = runner.run(stage_obj, context, bridge)
+
+                    async def sync_to_async_stream(sync_iter):
+                        _sentinel = object()
+                        while True:
+                            item = await loop.run_in_executor(
+                                None, partial(next, sync_iter, _sentinel)
+                            )
+                            if item is _sentinel:
+                                break
+                            yield item
+
+                    stream = ManagedAsyncIterator(sync_to_async_stream(sync_iterator), drain_task)
+
             return stream, context
         finally:
             end_time = time.time()
@@ -319,7 +345,13 @@ class Pipeline:
             `Context` object.
         """
         stream, context = await self.arun(data, config_path=config_path)
-        results = [item async for item in stream]
+        results = []
+        try:
+            async for item in stream:
+                results.append(item)
+        finally:
+            if isinstance(stream, ManagedAsyncIterator):
+                await stream.aclose()
         return results, context
 
     @property
@@ -443,7 +475,7 @@ class Pipeline:
                     for j, branch_pipeline in enumerate(stage_obj.branch_pipelines):
                         branch_graph_name = f"cluster_branch_{id(stage_obj)}_sub_{j}"
                         branch_dot, branch_first, branch_last = _traverse(
-                            branch_pipeline, branch_graph_name
+                            branch_pipeline, branch_name
                         )
                         dot.extend(branch_dot)
                         if branch_first:
