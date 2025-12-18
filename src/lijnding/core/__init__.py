@@ -4,8 +4,11 @@
 
 from .pipeline import Pipeline
 from .stage import stage, Stage, aggregator_stage
-from .context import Context
 from .errors import ErrorPolicy
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .context import Context
 from .hooks import Hooks
 
 __all__ = [

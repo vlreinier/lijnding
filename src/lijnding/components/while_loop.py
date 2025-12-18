@@ -9,7 +9,10 @@ from typing import Any, Callable, Union, Iterable, AsyncIterator, List
 
 from ..core.pipeline import Pipeline
 from ..core.stage import Stage, stage
-from ..core.context import Context
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..core.context import Context
 
 
 def while_loop(condition: Callable[[Any], bool], body: Union[Stage, Pipeline]) -> Stage:
