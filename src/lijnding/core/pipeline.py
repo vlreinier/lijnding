@@ -121,7 +121,8 @@ class Pipeline:
                 if item is None: continue
                 results.append(item)
             except asyncio.TimeoutError:
-                if last_tracker.value == 0:
+                # Break only if the last stage has finished AND its output queue is empty
+                if last_tracker.value == 0 and output_q.q.empty():
                     break
                 continue
 
