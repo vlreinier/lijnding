@@ -274,7 +274,12 @@ class Pipeline:
         final_q = connectors[-1]
         try:
             while True:
-                item = await final_q.get()
+                if self.config.fail_fast and self.context.is_shutting_down:
+                    break
+                try:
+                    item = await asyncio.wait_for(final_q.get(), timeout=0.2)
+                except asyncio.TimeoutError:
+                    continue
                 if item is None:
                     break
                 if len(item.args) == 1 and not item.kwargs:
@@ -284,11 +289,13 @@ class Pipeline:
         except Exception as e:
             print(f"Collector Exception: {e}")
         finally:
+            for connector in connectors:
+                if isinstance(connector, InterProcessConnector):
+                    connector.q.close()
+                    connector.q.join_thread()
             for type_, h in handles:
                 if type_ == "proc":
-                    if h.is_alive():
-                        h.terminate()
-                    h.join()
+                    h.join(timeout=5)
                 elif type_ == "thread":
                     h.join()
                 elif type_ == "task":
