@@ -17,6 +17,8 @@ dependencies = [
     "PyYAML>=6.0",
     "typeguard",
     "click>=8.0",
+    "pytest",
+    "pytest-asyncio",
 ]
 classifiers = [
     "Programming Language :: Python :: 3",

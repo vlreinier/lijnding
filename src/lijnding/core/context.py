@@ -1,75 +1,37 @@
 from __future__ import annotations
 
 import multiprocessing as mp
-import threading
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 import logging
+from logging.handlers import QueueHandler
 
-from .log import get_logger
-from ..config import Config
+class PipelineContext:
+    def __init__(self, manager: "mp.Manager", log_queue: "mp.Queue"):
+        self._state = manager.dict()
+        self._stop_event = mp.Event()
+        self._counter = mp.Value('i', 0)
+        self._log_queue = log_queue
 
+    @property
+    def is_shutting_down(self):
+        return self._stop_event.is_set()
 
-class Context:
-    """
-    A dict-like context for sharing state and metrics across pipeline stages.
-    """
+    def signal_failure(self):
+        self._stop_event.set()
 
-    def __init__(
-        self,
-        mp_safe: bool = False,
-        initial_data: Optional[Dict[str, Any]] = None,
-        config: Optional[Config] = None,
-        *,
-        pipeline_name: Optional[str] = None,
-        _from_proxies=None,
-    ):
-        self.logger: logging.Logger = get_logger("lijnding.context")
-        self.worker_state: Dict[str, Any] = {}
-        self.config = config
-        self.pipeline_name = pipeline_name
+    def get_logger(self, name: str) -> logging.Logger:
+        logger = logging.getLogger(name)
+        logger.setLevel(logging.INFO)
+        if not logger.handlers:
+            handler = QueueHandler(self._log_queue)
+            logger.addHandler(handler)
+        logger.propagate = False
+        return logger
 
-        if _from_proxies:
-            # Reconstruct from existing manager proxies
-            self._data, self._lock = _from_proxies
-            self._mp_safe = True
-            return
+    def increment_counter(self) -> int:
+        with self._counter.get_lock():
+            self._counter.value += 1
+            return self._counter.value
 
-        self._mp_safe = mp_safe
-        self._manager = None
-        if mp_safe:
-            self._manager = mp.Manager()
-            self._data = self._manager.dict()
-            self._lock = self._manager.Lock()
-        else:
-            self._data: Dict[str, Any] = {}
-            self._lock = threading.Lock()
-
-        if initial_data:
-            self.update(initial_data)
-
-    def get(self, key: str, default: Any = None) -> Any:
-        with self._lock:
-            return self._data.get(key, default)
-
-    def set(self, key: str, value: Any) -> None:
-        with self._lock:
-            self._data[key] = value
-
-    def update(self, other: Dict[str, Any]) -> None:
-        with self._lock:
-            for k, v in other.items():
-                self._data[k] = v
-
-    def to_dict(self) -> Dict[str, Any]:
-        with self._lock:
-            return dict(self._data)
-
-    def inc(self, key: str, amount: int = 1) -> int:
-        with self._lock:
-            current_value = self._data.get(key, 0)
-            new_value = int(current_value) + amount
-            self._data[key] = new_value
-            return new_value
-
-    def __repr__(self) -> str:
-        return f"Context(mp_safe={self._mp_safe}, data={self.to_dict()})"
+    def get_counter(self):
+        return self._counter.value
