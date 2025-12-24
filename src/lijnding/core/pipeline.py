@@ -272,19 +272,11 @@ class Pipeline:
             await input_conn.put(None)
         results = []
         final_q = connectors[-1]
-        last_active_tracker = active_trackers[-1]
         try:
             while True:
-                if (
-                    self.config.fail_fast and self.context.is_shutting_down
-                ) or last_active_tracker.value == 0:
-                    break
-                try:
-                    item = await asyncio.wait_for(final_q.get(), timeout=0.2)
-                except asyncio.TimeoutError:
-                    continue
+                item = await final_q.get()
                 if item is None:
-                    continue
+                    break
                 if len(item.args) == 1 and not item.kwargs:
                     results.append(item.args[0])
                 else:
