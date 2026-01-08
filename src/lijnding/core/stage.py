@@ -25,9 +25,9 @@ from typing import (
 
 if TYPE_CHECKING:
     from .pipeline import Pipeline
+    from .context import Context
 
 from ..typing.inference import infer_types
-from .context import Context
 from .errors import ErrorPolicy
 from .hooks import Hooks
 from .log import get_logger
